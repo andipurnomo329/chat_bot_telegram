@@ -1,15 +1,13 @@
 # bot/elastick_getdata.py
 import requests
 import urllib3
-from tabulate import tabulate  # pip install tabulate
+from config.settings import *
+# from tabulate import tabulate  # pip install tabulate
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-ES_HOST = "https://192.168.45.15:443" 
-USERNAME = "app_super"
-PASSWORD = "appsuperpassw0rd"
-
 def get_elastic_data():
+    print("massook")
     INDEXES = ["trx-goaml*"]
     KEY_VALUE = ["LTKT", "CIF", "LTKL"]    
     KOLOM = "label.keyword"
@@ -107,7 +105,7 @@ def get_elastic_data():
     # ===============================
     # Buat string output untuk Telegram
     # ===============================
-    mes = f"📊 Count Trx ({duration_text})\n\n"
+    mes = f"📊 CTR Queue ({duration_text})\n\n"
     for label, stats in result.items():
         mes += f"🔹 *{label}*\n"
         mes += f"   🔝 Max Count Trx : {stats['max']}\n"
@@ -115,3 +113,91 @@ def get_elastic_data():
         mes += f"   ⚡ Last Value    : {stats['last_value']}\n\n"
 
     return mes
+
+def get_notifcc():
+    # print("masookk")
+    INDEXES = ["enginenotif-ttrx*"]
+    query = {
+        "size": 0,
+        "query": {
+            "range": {
+            "@timestamp": {
+                "gte": "now-30m",
+                "lte": "now"
+            }
+            }
+        },
+        "aggs": {
+            "by_sendingtype": {
+            "terms": {
+                "field": "sendingtype.keyword",
+                "size": 10
+            },
+            "aggs": {
+                "status_count": {
+                "terms": {
+                    "field": "status.keyword",
+                    "size": 2
+                }
+                }
+            }
+            }
+        }
+    }
+
+    url = f"{ES_HOST}/" + ",".join(INDEXES) + "/_search"
+    response = requests.post(url, json=query, verify=False, auth=(USERNAME, PASSWORD))
+
+    if response.status_code != 200:
+        return f"Error: {response.status_code} {response.text}"
+
+    data = response.json()
+    
+    print(data)
+    sendingtype_map = {
+        "1": "SMS",
+        "2": "EMAIL",
+        "4": "MVRK"
+    }
+    agg = data.get("aggregations", {}) \
+              .get("by_sendingtype", {}) \
+              .get("buckets", [])
+
+    if not agg:
+        return "No aggregation data found"
+
+    result_text = "📨 *EngineNotif Status Summary (Last 30 minutes)*\n\n"
+
+    for bucket in agg:
+        sending_type = bucket.get("key")
+        alias = sendingtype_map.get(sending_type, "unknown")
+        statuses = bucket.get("status_count", {}).get("buckets", [])
+
+        # Default values
+        status_1 = 0
+        status_0 = 0
+        status_other = {}
+
+        for s in statuses:
+            key = str(s.get("key"))
+            count = s.get("doc_count", 0)
+
+            if key == "1":
+                status_1 = count
+            elif key == "0":
+                status_0 = count
+            else:
+                status_other[key] = count
+
+        result_text += f"🔹 *SendingType {alias}*\n"
+        result_text += f"   ✔️ Success : {status_1}\n"
+        result_text += f"   ❌ Failed  : {status_0}\n"
+
+        # Add non 0/1 statuses dynamically
+        for k, v in status_other.items():
+            result_text += f"   ⚠️ Status {k}: {v}\n"
+
+        result_text += "\n"
+    # Build pesan Telegram
+
+    return result_text

@@ -12,6 +12,7 @@ def main():
     menu_message_id = {}
 
     while True:
+        print("wait")
         # Poll Telegram
         try:
             updates = requests.get(
@@ -25,7 +26,7 @@ def main():
 
         if "result" not in updates:
             continue
-
+        # print(updates)
         for update in updates["result"]:
             offset = update["update_id"] + 1
 
