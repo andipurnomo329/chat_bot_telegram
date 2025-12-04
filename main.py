@@ -5,7 +5,7 @@ from bot.message_handler import handle_message
 from bot.callback_handler import *
 
 def main():
-    print("🤖 Bot running...")
+    print("🤖 Ready to serve ...")
 
     offset = None
     site_selected = {}
@@ -37,7 +37,6 @@ def main():
                 handle_message(update, menu_message_id)
 
         time.sleep(0.3)
-
 
 if __name__ == "__main__":
     main()

@@ -1,4 +1,3 @@
-# bot/elastick_getdata.py
 import requests
 import urllib3
 from config.settings import *
@@ -199,5 +198,4 @@ def get_notifcc():
 
         result_text += "\n"
     # Build pesan Telegram
-
     return result_text
