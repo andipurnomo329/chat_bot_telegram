@@ -1,62 +1,33 @@
 import requests
 import urllib3
 from config.settings import *
+from bot.queryElk.notifcc import notifcc_query
+from bot.queryElk.goaml import goamlQuery   
 # from tabulate import tabulate  # pip install tabulate
-
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-def get_elastic_data():
+sendingtype_map = {
+    "1": "SMS",
+    "2": "EMAIL",
+    "4": "MVRK"
+}
+def elastic_search(indexes, query):
+
+    url = f"{ES_HOST}/" + ",".join(indexes) + "/_search"
+    resp = requests.post(url, json=query, auth=(USERNAME, PASSWORD), verify=False)
+    if resp.status_code != 200:
+        raise Exception(f"[ELK ERROR] {resp.status_code}: {resp.text}")
+    return resp.json()
+
+def get_goaml_data():
     print("massook")
     INDEXES = ["trx-goaml*"]
-    KEY_VALUE = ["LTKT", "CIF", "LTKL"]    
-    KOLOM = "label.keyword"
-    SOURCE = ["label", "count_trx", "date_origin"]
-    RANGE = "30m"
-    query = {
-        "_source": SOURCE,
-        "query": {
-            "bool": {
-                "must": [
-                    {
-                        "range": {
-                            "@timestamp": {
-                                "gte": f"now-{RANGE}",
-                                "lte": "now"
-                            }
-                        }
-                    },
-                    {
-                        "terms": {
-                            KOLOM : KEY_VALUE
-                        }
-                    }
-                ]
-            }
-        },
-        "sort": [
-            {
-                "@timestamp": {
-                    "order": "asc"
-                }
-            }
-        ],
-        "size": 1000  # tambah size supaya dapat semua data 3 jam terakhir
-    }
-
-    url = f"{ES_HOST}/" + ",".join(INDEXES) + "/_search"
-    response = requests.post(url, json=query, verify=False, auth=(USERNAME, PASSWORD))
-
-    if response.status_code != 200:
-        return f"Error: {response.status_code} {response.text}"
-
-    data = response.json()
+    query = goamlQuery()
+    data = elastic_search(INDEXES, query)
     hits = data.get("hits", {}).get("hits", [])
     if not hits:
         return "Tidak ada data ditemukan"
-
-    # ===============================
-    # Proses max, min, last_value per label
-    # ===============================
+    
     summary = {}
     for item in hits:
         source = item.get("_source", {})
@@ -101,9 +72,6 @@ def get_elastic_data():
             duration_text = "periode terakhir"
     else:
         duration_text = "periode terakhir"
-    # ===============================
-    # Buat string output untuk Telegram
-    # ===============================
     mes = f"📊 CTR Queue ({duration_text})\n\n"
     for label, stats in result.items():
         mes += f"🔹 *{label}*\n"
@@ -115,49 +83,8 @@ def get_elastic_data():
 
 def get_notifcc():
     # print("masookk")
-    INDEXES = ["enginenotif-ttrx*"]
-    query = {
-        "size": 0,
-        "query": {
-            "range": {
-            "@timestamp": {
-                "gte": "now-30m",
-                "lte": "now"
-            }
-            }
-        },
-        "aggs": {
-            "by_sendingtype": {
-            "terms": {
-                "field": "sendingtype.keyword",
-                "size": 10
-            },
-            "aggs": {
-                "status_count": {
-                "terms": {
-                    "field": "status.keyword",
-                    "size": 2
-                }
-                }
-            }
-            }
-        }
-    }
-
-    url = f"{ES_HOST}/" + ",".join(INDEXES) + "/_search"
-    response = requests.post(url, json=query, verify=False, auth=(USERNAME, PASSWORD))
-
-    if response.status_code != 200:
-        return f"Error: {response.status_code} {response.text}"
-
-    data = response.json()
-    
+    data = elastic_search(["enginenotif-ttrx*"], notifcc_query())
     print(data)
-    sendingtype_map = {
-        "1": "SMS",
-        "2": "EMAIL",
-        "4": "MVRK"
-    }
     agg = data.get("aggregations", {}) \
               .get("by_sendingtype", {}) \
               .get("buckets", [])
@@ -188,14 +115,20 @@ def get_notifcc():
             else:
                 status_other[key] = count
 
-        result_text += f"🔹 *SendingType {alias}*\n"
-        result_text += f"   ✔️ Success : {status_1}\n"
-        result_text += f"   ❌ Failed  : {status_0}\n"
+        total = status_1 + status_0
+        if total > 0:
+            success_percent = (status_1 / total) * 100
+            failed_percent  = (status_0 / total) * 100
+        else:
+            success_percent = 0
+            failed_percent = 0
 
-        # Add non 0/1 statuses dynamically
+        result_text += f"🔹 *SendingType {alias}*\n"
+        result_text += f"   ✔️ Success : {status_1} ({success_percent:.2f}%)\n"
+        result_text += f"   ❌ Failed  : {status_0} ({failed_percent:.2f}%)\n"
+
         for k, v in status_other.items():
             result_text += f"   ⚠️ Status {k}: {v}\n"
 
         result_text += "\n"
-    # Build pesan Telegram
     return result_text
