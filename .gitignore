@@ -1,3 +1,6 @@
-/bot/__pycache__/*
-/config/__pycache__/*
-/utils/__pycache__/*
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.log
+config/settings_local.py

@@ -3,6 +3,7 @@ import urllib3
 from config.settings import *
 from bot.queryElk.notifcc import notifcc_query
 from bot.queryElk.goaml import goamlQuery   
+from bot.queryElk.mtel import mtelQuery   
 # from tabulate import tabulate  # pip install tabulate
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
@@ -131,4 +132,37 @@ def get_notifcc():
             result_text += f"   ⚠️ Status {k}: {v}\n"
 
         result_text += "\n"
+    return result_text
+
+def get_mtel():
+    data = elastic_search(["log-mteleplus*"], mtelQuery())
+    agg = (data.get("aggregations", {})
+               .get("by_channel", {})
+               .get("buckets", []))
+
+    if not agg:
+        return "No aggregation data found"
+
+    result_text = "📨 *Mtel Summary (Last 30 minutes)*\n\n"
+
+    for bucket in agg:
+        channel = bucket.get("key", "-")
+        total_channel = bucket.get("doc_count", 0)
+
+        result_text += f"*Channel:* `{channel}` — *Total:* {total_channel}\n"
+
+        directions = bucket.get("by_direction", {}).get("buckets", [])
+
+        if not directions:
+            result_text += "  • No direction data\n"
+            continue
+
+        for d in directions:
+            direction = d.get("key", "-")
+            total_dir = d.get("doc_count", 0)
+
+            result_text += f"  • `{direction}` → {total_dir}\n"
+
+        result_text += "\n"  # pemisah antar channel
+
     return result_text
