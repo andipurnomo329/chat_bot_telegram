@@ -11,10 +11,6 @@ def cek_authorized(user_id, chat_id, username):
         return False
     return True
 
-
-# ===============================
-# DECORATOR ANTI ULANG
-# ===============================
 def require_auth(func):
     def wrapper(chat_id, user_id, username, *args, **kwargs):
         if not cek_authorized(user_id, chat_id, username):
@@ -22,10 +18,6 @@ def require_auth(func):
         return func(chat_id, user_id, username, *args, **kwargs)
     return wrapper
 
-
-# ===============================
-# COMMAND HANDLER
-# ===============================
 @require_auth
 def cmd_start(chat_id, user_id, username, menu_message_id):
     title, kb = build_dynamic_menu([])
@@ -34,13 +26,11 @@ def cmd_start(chat_id, user_id, username, menu_message_id):
     if msg_out and "result" in msg_out:
         menu_message_id[chat_id] = msg_out["result"]["message_id"]
 
-
 @require_auth
 def cmd_quegoaml(chat_id, user_id, username):
     send_message(chat_id, "sedang menarik data, mohon tunggu sebentar ...")
     data = get_goaml_data()
     send_message(chat_id, data)
-
 
 @require_auth
 def cmd_notifcc(chat_id, user_id, username):
@@ -48,10 +38,6 @@ def cmd_notifcc(chat_id, user_id, username):
     data = get_notifcc()
     send_message(chat_id, data)
 
-
-# ===============================
-# MESSAGE ROUTER UTAMA
-# ===============================
 def handle_message(update, menu_message_id):
 
     msg = update.get("message")
@@ -75,5 +61,4 @@ def handle_message(update, menu_message_id):
         handler()
         return
 
-    # perintah tidak dikenal → diam saja
     return
