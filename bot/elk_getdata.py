@@ -1,9 +1,11 @@
 import requests
 import urllib3
+from utils.telegram import *
 from config.settings import *
 from bot.queryElk.notifcc import notifcc_query
 from bot.queryElk.goaml import goamlQuery   
 from bot.queryElk.mtel import mtelQuery   
+from bot.playwrigth import capture 
 # from tabulate import tabulate  # pip install tabulate
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
@@ -85,7 +87,7 @@ def get_goaml_data():
 def get_notifcc():
     # print("masookk")
     data = elastic_search(["enginenotif-ttrx*"], notifcc_query())
-    print(data)
+    # print(data)
     agg = data.get("aggregations", {}) \
               .get("by_sendingtype", {}) \
               .get("buckets", [])
@@ -135,6 +137,8 @@ def get_notifcc():
     return result_text
 
 def get_mtel():
+    # filename = capture()  
+    # print(filename)
     data = elastic_search(["log-mteleplus*"], mtelQuery())
     agg = (data.get("aggregations", {})
                .get("by_channel", {})
@@ -163,6 +167,6 @@ def get_mtel():
 
             result_text += f"  • `{direction}` → {total_dir}\n"
 
-        result_text += "\n"  # pemisah antar channel
+        result_text += "\n"  
 
     return result_text

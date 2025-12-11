@@ -27,15 +27,16 @@ def cmd_start(chat_id, user_id, username, menu_message_id):
         menu_message_id[chat_id] = msg_out["result"]["message_id"]
 
 @require_auth
-def cmd_quegoaml(chat_id, user_id, username):
-    send_message(chat_id, "sedang menarik data, mohon tunggu sebentar ...")
-    data = get_goaml_data()
-    send_message(chat_id, data)
-
-@require_auth
 def cmd_mtel(chat_id, user_id, username):
     send_message(chat_id, "sedang menarik data, mohon tunggu sebentar ...")
     data = get_mtel()
+    # send_photo(chat_id, "kibana.png", caption="Grafik MTEL Terbaru")
+    send_message(chat_id, data)
+
+@require_auth
+def cmd_quegoaml(chat_id, user_id, username):
+    send_message(chat_id, "sedang menarik data, mohon tunggu sebentar ...")
+    data = get_goaml_data()
     send_message(chat_id, data)
 
 @require_auth
@@ -58,7 +59,7 @@ def handle_message(update, menu_message_id):
     COMMANDS = {
         "/start": lambda: cmd_start(chat_id, user_id, username, menu_message_id),
         "/jenkins_bot": lambda: cmd_start(chat_id, user_id, username, menu_message_id),
-        "/quegoaml": lambda: cmd_quegoaml(chat_id, user_id, username),
+        "/goaml": lambda: cmd_quegoaml(chat_id, user_id, username),
         "/mtel": lambda: cmd_mtel(chat_id, user_id, username),
         "/notifcc": lambda: cmd_notifcc(chat_id, user_id, username),
     }

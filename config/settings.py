@@ -1,7 +1,7 @@
 import os
 import urllib3
 import socket
-from datetime import datetime, timezone, timedelta
+from pathlib import Path
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
@@ -22,7 +22,9 @@ AUTHORIZED_USERS = [538565365]
 MENU_TIMEOUT = 30
 active_menu = {}
 
-LOG_DIR = r"D:\Jemi\AAD\script\telegram_bot\log"
+BASE_DIR = Path(__file__).resolve().parents[1]
+PICT_DIR = BASE_DIR / "pict"
+LOG_DIR = BASE_DIR / "log"
 LOG_FILE = os.path.join(LOG_DIR, "jenkins_bot.log")
 
 os.makedirs(LOG_DIR, exist_ok=True)

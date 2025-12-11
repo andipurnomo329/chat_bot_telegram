@@ -1,5 +1,5 @@
-from config.settings import BASE_URL
-from utils.http_utils import safe_post
+from config.settings import BASE_URL,PICT_DIR
+from utils.http_utils import safe_post, safe_post_pict
 
 def send_message(chat_id, text, reply_markup=None):
     data = {"chat_id": chat_id, "text": text, "parse_mode": "Markdown"}
@@ -15,6 +15,26 @@ def send_message(chat_id, text, reply_markup=None):
             return None
     return None
 
+def send_photo(chat_id, image_path, caption=None):
+    url = f"{BASE_URL}/sendPhoto"
+
+    with open(f"{PICT_DIR}/{image_path}", "rb") as f:
+        files = {"photo": f}
+        data = {
+            "chat_id": chat_id,
+        }
+
+        if caption:
+            data["caption"] = caption
+
+        resp = safe_post_pict(url, data=data, files=files)
+
+    if resp:
+        try:
+            return resp.json()
+        except:
+            return None
+    return None
 
 def edit_message(chat_id, message_id, text, reply_markup=None):
     data = {

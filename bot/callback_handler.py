@@ -1,7 +1,7 @@
 
 from config.settings import *
 from config.jenkins_services import JENKINS_SERVICES
-from utils.telegram import send_message, edit_message, delete_message
+from utils.telegram import send_message, edit_message, delete_message, send_photo
 from utils.helper import *
 from utils.logger import write_log
 from bot.callback_handler import *

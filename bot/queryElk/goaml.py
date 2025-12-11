@@ -31,6 +31,6 @@ def goamlQuery():
                 }
             }
         ],
-        "size": 1000  # tambah size supaya dapat semua data 3 jam terakhir
+        "size": 10  # tambah size supaya dapat semua data 3 jam terakhir
     }
     return query
