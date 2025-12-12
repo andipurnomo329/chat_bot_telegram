@@ -21,6 +21,13 @@ def goamlQuery():
                             KOLOM : KEY_VALUE
                         }
                     }
+                ],
+                "must_not": [
+                    {
+                    "exists": {
+                        "field": "datecode"
+                    }
+                    }
                 ]
             }
         },
