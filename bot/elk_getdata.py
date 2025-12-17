@@ -5,6 +5,7 @@ from config.settings import *
 from bot.queryElk.notifcc import notifcc_query
 from bot.queryElk.goaml import goamlQuery   
 from bot.queryElk.mtel import mtelQuery   
+from bot.queryElk.ams import amsQuery   
 from bot.playwrigth import capture 
 # from tabulate import tabulate  # pip install tabulate
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
@@ -18,6 +19,14 @@ def elastic_search(indexes, query):
 
     url = f"{ES_HOST}/" + ",".join(indexes) + "/_search"
     resp = requests.post(url, json=query, auth=(USERNAME, PASSWORD), verify=False)
+    if resp.status_code != 200:
+        raise Exception(f"[ELK ERROR] {resp.status_code}: {resp.text}")
+    return resp.json()
+
+def elastic_kbn(indexes, query):
+
+    url = f"{KBNHUB}/" + ",".join(indexes) + "/_search"
+    resp = requests.post(url, json=query, auth=(USERKBNHUB, PASSWORDKBNHUB), verify=False)
     if resp.status_code != 200:
         raise Exception(f"[ELK ERROR] {resp.status_code}: {resp.text}")
     return resp.json()
@@ -169,4 +178,21 @@ def get_mtel():
 
         result_text += "\n"  
 
+    return result_text
+
+def get_ams_data():
+    # filename = capture()  
+    # print(filename)
+    result_text = "📨 *AMS Summary (Last 30 minutes)*\n\n"
+    data = elastic_kbn(["metricbeat-*"], amsQuery())
+    for hit in data.get("hits", {}).get("hits", []):
+        fs = hit["_source"]["system"]["filesystem"]
+        used = fs["used"]["bytes"] / 1024 /  1024 / 1024
+        total = fs["total"] / 1024 /  1024 / 1024
+        usedPersent = (used / total) * 100
+
+    status = "⚠️" if usedPersent > 80 else "✅"
+
+    result_text += f"{status} *ORA_ARC:*{used:.2f} GB/ {total:.2f} GB ({usedPersent:.2f}%)\n"
+    print(result_text)
     return result_text

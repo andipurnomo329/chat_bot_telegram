@@ -9,6 +9,10 @@ ES_HOST = "https://192.168.45.15:443"
 USERNAME = "app_super"
 PASSWORD = "appsuperpassw0rd"
 
+KBNHUB = "https://elkhub.bni.co.id:443"
+USERKBNHUB = "57868"
+PASSWORDKBNHUB = "57868Jhee"
+
 TELEGRAM_TOKEN = "8121093891:AAHUjXLArJ1QOuAQPHtuJtHNVaLMdM-XEJE"
 BASE_URL = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}"
 #JENKINS_BASE_URL = "http://10.70.12.34:8226"
