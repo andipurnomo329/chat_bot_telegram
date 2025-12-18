@@ -3,6 +3,8 @@ from bot.menu_builder import build_dynamic_menu
 from bot.callback_handler import *
 from bot.elk_getdata import *
 
+waitingWord = "🤖 Mohon ditunggu ..."
+
 def cek_authorized(user_id, chat_id, username):
     if user_id not in AUTHORIZED_USERS:
         send_message(chat_id, f"🚫 @{username} tidak punya akses.")
@@ -28,28 +30,33 @@ def cmd_start(chat_id, user_id, username, menu_message_id):
 
 @require_auth
 def cmd_mtel(chat_id, user_id, username):
-    send_message(chat_id, "sedang menarik data, mohon tunggu sebentar ...")
+    mid, message = send_message(chat_id, waitingWord )
     data = get_mtel()
     # send_photo(chat_id, "kibana.png", caption="Grafik MTEL Terbaru")
     send_message(chat_id, data)
+    delete_message(chat_id=message["chat"]["id"], message_id=mid)
 
 @require_auth
 def cmd_quegoaml(chat_id, user_id, username):
-    send_message(chat_id, "sedang menarik data, mohon tunggu sebentar ...")
+    mid, message = send_message(chat_id, waitingWord )
     data = get_goaml_data()
     send_message(chat_id, data)
+    delete_message(chat_id=message["chat"]["id"], message_id=mid)
+
 
 @require_auth
 def cmd_ams(chat_id, user_id, username):
-    send_message(chat_id, "sedang menarik data, mohon tunggu sebentar ...")
+    mid, message = send_message(chat_id, waitingWord )
     data = get_ams_data()
     send_message(chat_id, data)
+    delete_message(chat_id=message["chat"]["id"], message_id=mid)
 
 @require_auth
 def cmd_notifcc(chat_id, user_id, username):
-    send_message(chat_id, "sedang menarik data, mohon tunggu sebentar ...")
+    mid, message = send_message(chat_id, waitingWord )
     data = get_notifcc()
     send_message(chat_id, data)
+    delete_message(chat_id=message["chat"]["id"], message_id=mid)
 
 def handle_message(update, menu_message_id):
 

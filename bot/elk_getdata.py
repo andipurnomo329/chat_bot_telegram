@@ -3,7 +3,7 @@ import urllib3
 from utils.telegram import *
 from config.settings import *
 from bot.queryElk.notifcc import notifcc_query
-from bot.queryElk.goaml import goamlQuery   
+from bot.queryElk.goaml import *   
 from bot.queryElk.mtel import mtelQuery   
 from bot.queryElk.ams import amsQuery   
 from bot.playwrigth import capture 
@@ -31,8 +31,13 @@ def elastic_kbn(indexes, query):
         raise Exception(f"[ELK ERROR] {resp.status_code}: {resp.text}")
     return resp.json()
 
+def get_goaml_detail_datecode():
+    INDEXES = ["trx-goaml*"]
+    query = detailDatecode()
+    data = elastic_search(INDEXES, query)
+    return data.get("aggregations", {}).get("by_datecode", {}).get("buckets", [])
+
 def get_goaml_data():
-    print("massook")
     INDEXES = ["trx-goaml*"]
     query = goamlQuery()
     data = elastic_search(INDEXES, query)
@@ -90,7 +95,17 @@ def get_goaml_data():
         mes += f"   🔝 Max Count Trx : {stats['max']}\n"
         mes += f"   🔻 Min Count Trx : {stats['min']}\n"
         mes += f"   ⚡ Last Value    : {stats['last_value']}\n\n"
-
+    mes += "🗂️ Detail Datecode:\n"
+    detailDatecode_data = get_goaml_detail_datecode()
+    for bucket in detailDatecode_data:
+        datecode = bucket.get("key", "-")
+        latest_doc = bucket.get("latest_doc", {}).get("hits", {}).get("hits", [])
+        if latest_doc:
+            source = latest_doc[0].get("_source", {})
+            label = source.get("label", "-")
+            count_trx = source.get("count_trx", 0)
+            date_origin = source.get("date_origin", "-")
+            mes += f"   • {label}-*{datecode}*: {count_trx}\n"
     return mes
 
 def get_notifcc():

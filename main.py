@@ -36,7 +36,7 @@ def main():
             else:
                 handle_message(update, menu_message_id)
 
-        time.sleep(0.3)
+        time.sleep(0.4)
 
 if __name__ == "__main__":
     main()
