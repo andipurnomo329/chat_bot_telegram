@@ -3,4 +3,5 @@ __pycache__/
 *.pyc
 *.pyo
 *.log
+*.png
 config/settings_local.py

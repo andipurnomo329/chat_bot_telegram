@@ -4,6 +4,7 @@ from bot.callback_handler import *
 from bot.elk_getdata import *
 
 waitingWord = "🤖 Mohon ditunggu ..."
+captureDashboardWord = "🤖 Sedang mengambil screenshot dashboard ..."
 
 def cek_authorized(user_id, chat_id, username):
     if user_id not in AUTHORIZED_USERS:
@@ -32,9 +33,13 @@ def cmd_start(chat_id, user_id, username, menu_message_id):
 def cmd_mtel(chat_id, user_id, username):
     mid, message = send_message(chat_id, waitingWord )
     data = get_mtel()
-    # send_photo(chat_id, "kibana.png", caption="Grafik MTEL Terbaru")
     send_message(chat_id, data)
     delete_message(chat_id=message["chat"]["id"], message_id=mid)
+    mid, message = send_message(chat_id, captureDashboardWord )
+    filename = getDashboardScreenshot("mtel")
+    send_photo(chat_id, filename, caption="Dashboard Mtel Screenshot")
+    delete_message(chat_id=message["chat"]["id"], message_id=mid)
+
 
 @require_auth
 def cmd_quegoaml(chat_id, user_id, username):
@@ -42,7 +47,10 @@ def cmd_quegoaml(chat_id, user_id, username):
     data = get_goaml_data()
     send_message(chat_id, data)
     delete_message(chat_id=message["chat"]["id"], message_id=mid)
-
+    mid, message = send_message(chat_id, captureDashboardWord )
+    filename = getDashboardScreenshot("goaml")
+    send_photo(chat_id, filename, caption="Dashboard goaml Screenshot")
+    delete_message(chat_id=message["chat"]["id"], message_id=mid)
 
 @require_auth
 def cmd_ams(chat_id, user_id, username):

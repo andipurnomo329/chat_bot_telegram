@@ -15,6 +15,7 @@ sendingtype_map = {
     "2": "EMAIL",
     "4": "MVRK"
 }
+
 def elastic_search(indexes, query):
 
     url = f"{ES_HOST}/" + ",".join(indexes) + "/_search"
@@ -161,8 +162,6 @@ def get_notifcc():
     return result_text
 
 def get_mtel():
-    # filename = capture()  
-    # print(filename)
     data = elastic_search(["log-mteleplus*"], mtelQuery())
     agg = (data.get("aggregations", {})
                .get("by_channel", {})
@@ -176,9 +175,7 @@ def get_mtel():
     for bucket in agg:
         channel = bucket.get("key", "-")
         total_channel = bucket.get("doc_count", 0)
-
         result_text += f"*Channel:* `{channel}` — *Total:* {total_channel}\n"
-
         directions = bucket.get("by_direction", {}).get("buckets", [])
 
         if not directions:
@@ -211,3 +208,9 @@ def get_ams_data():
     result_text += f"{status} *ORA_ARC:*{used:.2f} GB/ {total:.2f} GB ({usedPersent:.2f}%)\n"
     print(result_text)
     return result_text
+
+def getDashboardScreenshot(app_name):
+    print(app_name)
+    filename = capture(app_name)  
+    print(filename)
+    return filename

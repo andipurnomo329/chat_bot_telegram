@@ -38,7 +38,7 @@ def goamlQuery():
                 }
             }
         ],
-        "size": 10  # tambah size supaya dapat semua data 3 jam terakhir
+        "size": 50  # tambah size supaya dapat semua data 3 jam terakhir
     }
     return query
 def detailDatecode():
