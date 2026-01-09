@@ -26,7 +26,7 @@ def capture(app_name):
         page.goto(
             sendingtype_map[app_name],
             wait_until="domcontentloaded",
-            timeout=190000
+            timeout=200000
         )
         page.wait_for_load_state("networkidle")
         

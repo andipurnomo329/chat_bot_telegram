@@ -4,7 +4,7 @@ from utils.telegram import *
 from config.settings import *
 from bot.queryElk.notifcc import notifcc_query
 from bot.queryElk.goaml import *   
-from bot.queryElk.mtel import mtelQuery   
+from bot.queryElk.mtel import *   
 from bot.queryElk.ams import amsQuery   
 from bot.playwrigth import capture 
 # from tabulate import tabulate  # pip install tabulate
@@ -189,6 +189,15 @@ def get_mtel():
             result_text += f"  • `{direction}` → {total_dir}\n"
 
         result_text += "\n"  
+    data2 = elastic_search(["log-mteleplus-*"], getSmsContentMtel())
+    agg2 = data2.get('hits', {}).get('hits', [])
+    print(agg2)
+    # if not agg:
+    #     return "No aggregation data found"
+    # for bucket in agg:
+    #     sms_content = bucket.get("key", "-")
+    #     total_sms = bucket.get("doc_count", 0)
+    #     result_text += f"*SMS Content:* `{sms_content}` — *Total:* {total_sms}\n"   
 
     return result_text
 
