@@ -5,7 +5,7 @@ from datetime import datetime
 
 sendingtype_map = {
     "mtel": "https://192.168.45.33/app/kibana#/dashboard/8476f2e0-a8aa-11f0-9991-e7551419b201?_g=(filters:!(),refreshInterval:(pause:!t,value:0),time:(from:now-1h,to:now))&_a=(description:'',filters:!(),fullScreenMode:!f,options:(hidePanelTitles:!f,useMargins:!t),query:(language:kuery,query:''),timeRestore:!f,title:'MTELEPLUS%20NOTIF%20CC',viewMode:view)",
-    "goaml": "https://192.168.45.33/app/kibana#/dashboard/224db7a0-7d48-11ee-b1ae-7ffc86917c48?_g=(filters:!(),refreshInterval:(pause:!t,value:0),time:(from:now-15m,to:now))&_a=(description:'',filters:!(),fullScreenMode:!f,options:(hidePanelTitles:!f,useMargins:!t),query:(language:kuery,query:''),timeRestore:!f,title:'GO%20AML%20Dashboard',viewMode:view)",
+    "goaml": "https://192.168.45.33/app/kibana#/dashboard/224db7a0-7d48-11ee-b1ae-7ffc86917c48?_g=(filters:!(),refreshInterval:(pause:!t,value:0),time:(from:now-1h,to:now))&_a=(description:'',filters:!(),fullScreenMode:!f,options:(hidePanelTitles:!f,useMargins:!t),query:(language:kuery,query:''),timeRestore:!f,title:'GO%20AML%20Dashboard',viewMode:view)",
     "4": "MVRK"
 }
 
@@ -26,7 +26,7 @@ def capture(app_name):
         page.goto(
             sendingtype_map[app_name],
             wait_until="domcontentloaded",
-            timeout=200000
+            timeout=180000
         )
         page.wait_for_load_state("networkidle")
         
