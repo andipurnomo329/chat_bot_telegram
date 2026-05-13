@@ -6,7 +6,9 @@ from bot.queryElk.notifcc import notifcc_query
 from bot.queryElk.goaml import *   
 from bot.queryElk.mtel import *   
 from bot.queryElk.ams import amsQuery   
+from bot.queryElk.wicpbi import wicQuery   
 from bot.playwrigth import capture 
+from datetime import datetime
 # from tabulate import tabulate  # pip install tabulate
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
@@ -216,6 +218,66 @@ def get_ams_data():
 
     result_text += f"{status} *ORA_ARC:*{used:.2f} GB/ {total:.2f} GB ({usedPersent:.2f}%)\n"
     print(result_text)
+    return result_text
+
+def get_wic_data(cif):
+
+    result_text = ""
+    result_text1 = ""
+    result_text2 = ""
+    Total_Pbi = 0
+
+    data = elastic_search(
+        ["wic-trx-pbi-ceklimit-*","log-wic-trx-pbi*"], wicQuery(cif)
+    )
+    print(data)
+
+    hits = data.get("hits", {}).get("hits", [])
+    if not hits:
+        return f"❌ Data cif {cif} tidak ditemukan"
+    for hit in hits:
+        src = hit["_source"]
+        index_name = hit["_index"]
+        # =========================
+        # TRX PBI LIMIT
+        # =========================
+        if "ceklimit" in index_name:
+            trx_type = "TrxPbiLimit"
+            result_text1 += (
+                f"📌 Table         : {trx_type}\n"
+                f"🕒 RequestTime : {datetime.strptime(src.get('RequestTime'), '%Y-%m-%dT%H:%M:%S.%fZ').strftime('%d-%m-%Y %H:%M:%S')}\n"
+                f"💱 CCY         : {src.get('CCY1', '-')} -> {src.get('CCY2', '-')}\n"
+                f"👤 CIF         : {src.get('CIF', '-')}\n"
+                f"💳 NoRek       : {src.get('Norek', '-')}\n"
+                f"📈 Rate        : {float(src.get('Rate', 0)):,.0f}\n"
+                f"💵 NominalUSD  : {float(src.get('NominalEqUSD', 0)):,.2f}\n"
+                f"💰 NominalIDR  : {float(src.get('Nominal', 0)):,.2f}\n"
+                f"━━━━━━━━━━━━━━━\n"
+            )
+
+        # =========================
+        # TRX PBI
+        # =========================
+        else:
+            Total_Pbi += float(src.get('NominalEqUSD', 0))
+            trx_type = "TrxPBI"
+            result_text2 += (
+                f"📌 Table         : {trx_type}\n"
+                f"💱 CCY         : {src.get('CCY1', '-')} -> {src.get('CCY2', '-')}\n"
+                f"👤 CIF         : {src.get('CIF', '-')}\n"
+                f"💳 NoRek       : {src.get('NoRek', '-')}\n"
+                f"📈 Rate        : {float(src.get('Rate', 0)):,.0f}\n"
+                f"💵 NominalUSD  : {float(src.get('NominalEqUSD', 0)):,.2f}\n"
+                f"💰 NominalIDR  : {float(src.get('Nominal', 0)):,.2f}\n"
+                f"📄 NoJurnal    : {src.get('NoJurnal', '-')}\n"
+                f"━━━━━━━━━━━━━━━\n"
+            )
+    result_text += (
+        f"{result_text1}"
+        f"{result_text2}"
+        f"\n💵 Total PBI USD : {Total_Pbi:.2f}"
+    )
+    
     return result_text
 
 def getDashboardScreenshot(app_name):

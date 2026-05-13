@@ -76,15 +76,44 @@ def cmd_notifcc(chat_id, user_id, username):
     finally:
         delete_message(chat_id=message["chat"]["id"], message_id=mid)
 
+@require_auth
+def cmd_wic(chat_id, user_id, username, cif):
+    mid, message = send_message(chat_id, WAITING_MSG)
+    try:
+        data = get_wic_data(cif)
+        send_message(chat_id, data)
+    except Exception as e:
+        send_message(chat_id, f"❌ {e}")
+    finally:
+        delete_message(
+            chat_id=message["chat"]["id"],
+            message_id=mid
+        )
+
 def handle_message(update, menu_message_id):
+
     msg = update.get("message")
+
     if not msg:
         return
 
     chat_id = msg["chat"]["id"]
     user_id = msg["from"]["id"]
     username = msg["from"].get("first_name", f"user_{user_id}")
-    text = msg.get("text", "").lower()
+
+    text = msg.get("text", "").lower().strip()
+
+    # HANDLE DYNAMIC COMMAND
+    if text.startswith("/wic_"):
+
+        cif = text.split("_", 1)[1]
+
+        return cmd_wic(
+            chat_id,
+            user_id,
+            username,
+            cif
+        )
 
     COMMANDS = {
         "/start": lambda: cmd_start(chat_id, user_id, username, menu_message_id),
@@ -94,6 +123,9 @@ def handle_message(update, menu_message_id):
         "/ams": lambda: cmd_ams(chat_id, user_id, username),
         "/notifcc": lambda: cmd_notifcc(chat_id, user_id, username),
     }
+
+    if text in COMMANDS:
+        COMMANDS[text]()
 
     handler = COMMANDS.get(text)
     if handler:
