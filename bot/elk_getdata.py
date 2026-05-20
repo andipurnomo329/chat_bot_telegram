@@ -8,7 +8,8 @@ from bot.queryElk.mtel import *
 from bot.queryElk.ams import amsQuery   
 from bot.queryElk.wicpbi import wicQuery   
 from bot.playwrigth import capture 
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
+import pandas as pd
 # from tabulate import tabulate  # pip install tabulate
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
@@ -204,8 +205,6 @@ def get_mtel():
     return result_text
 
 def get_ams_data():
-    # filename = capture()  
-    # print(filename)
     result_text = "📨 *AMS Summary (Last 30 minutes)*\n\n"
     data = elastic_kbn(["metricbeat-*"], amsQuery())
     for hit in data.get("hits", {}).get("hits", []):
@@ -222,63 +221,161 @@ def get_ams_data():
 
 def get_wic_data(cif):
 
-    result_text = ""
-    result_text1 = ""
-    result_text2 = ""
     Total_Pbi = 0
+    trxlimit_rows = []
+    trxpbi_rows = []
 
     data = elastic_search(
-        ["wic-trx-pbi-ceklimit-*","log-wic-trx-pbi*"], wicQuery(cif)
+        ["wic-trx-pbi-ceklimit-*", "log-wic-trx-pbi*"],
+        wicQuery(cif)
     )
-    print(data)
 
     hits = data.get("hits", {}).get("hits", [])
+
     if not hits:
-        return f"❌ Data cif {cif} tidak ditemukan"
+        return f"❌ Data CIF {cif} tidak ditemukan", None
+
     for hit in hits:
+
         src = hit["_source"]
         index_name = hit["_index"]
+
         # =========================
-        # TRX PBI LIMIT
+        # AMBIL TIME (SIMPLE INLINE)
+        # =========================
+        raw_time = src.get("RequestTime") or src.get("DateTime")
+
+        if raw_time:
+            dt = datetime.strptime(raw_time, "%Y-%m-%dT%H:%M:%S.%fZ").replace(tzinfo=timezone.utc)
+            dt_wib = dt + timedelta(hours=7)
+            time_str = dt_wib.strftime("%d-%m-%Y %H:%M:%S")
+        else:
+            time_str = "-"
+
+        # =========================
+        # TRX LIMIT
         # =========================
         if "ceklimit" in index_name:
-            trx_type = "TrxPbiLimit"
-            result_text1 += (
-                f"📌 Table         : {trx_type}\n"
-                f"🕒 RequestTime : {datetime.strptime(src.get('RequestTime'), '%Y-%m-%dT%H:%M:%S.%fZ').strftime('%d-%m-%Y %H:%M:%S')}\n"
-                f"💱 CCY         : {src.get('CCY1', '-')} -> {src.get('CCY2', '-')}\n"
-                f"👤 CIF         : {src.get('CIF', '-')}\n"
-                f"💳 NoRek       : {src.get('Norek', '-')}\n"
-                f"📈 Rate        : {float(src.get('Rate', 0)):,.0f}\n"
-                f"💵 NominalUSD  : {float(src.get('NominalEqUSD', 0)):,.2f}\n"
-                f"💰 NominalIDR  : {float(src.get('Nominal', 0)):,.2f}\n"
-                f"━━━━━━━━━━━━━━━\n"
-            )
+
+            trxlimit_rows.append({
+                "RequestTime": time_str,
+                "CCY1": src.get("CCY1", "-"),
+                "CCY2": src.get("CCY2", "-"),
+                "CIF": src.get("CIF", "-"),
+                "NoRek": src.get("Norek", "-"),
+                "Rate": float(src.get("Rate", 0)),
+                "NominalUSD": float(src.get("NominalEqUSD", 0)),
+                "NominalIDR": float(src.get("Nominal", 0))
+            })
 
         # =========================
         # TRX PBI
         # =========================
-        else:
-            Total_Pbi += float(src.get('NominalEqUSD', 0))
-            trx_type = "TrxPBI"
-            result_text2 += (
-                f"📌 Table         : {trx_type}\n"
-                f"💱 CCY         : {src.get('CCY1', '-')} -> {src.get('CCY2', '-')}\n"
-                f"👤 CIF         : {src.get('CIF', '-')}\n"
-                f"💳 NoRek       : {src.get('NoRek', '-')}\n"
-                f"📈 Rate        : {float(src.get('Rate', 0)):,.0f}\n"
-                f"💵 NominalUSD  : {float(src.get('NominalEqUSD', 0)):,.2f}\n"
-                f"💰 NominalIDR  : {float(src.get('Nominal', 0)):,.2f}\n"
-                f"📄 NoJurnal    : {src.get('NoJurnal', '-')}\n"
-                f"━━━━━━━━━━━━━━━\n"
-            )
-    result_text += (
-        f"{result_text1}"
-        f"{result_text2}"
-        f"\n💵 Total PBI USD : {Total_Pbi:.2f}"
+        elif "log-wic-trx-pbi" in index_name:
+
+            nominal_usd = float(src.get("NominalEqUSD", 0))
+            Total_Pbi += nominal_usd
+
+            trxpbi_rows.append({
+                "DateTime": time_str,
+                "CCY1": src.get("CCY1", "-"),
+                "CCY2": src.get("CCY2", "-"),
+                "CIF": src.get("CIF", "-"),
+                "NoRek": src.get("NoRek", "-"),
+                "Rate": float(src.get("Rate", 0)),
+                "NominalUSD": nominal_usd,
+                "NominalIDR": float(src.get("Nominal", 0)),
+                "NoJurnal": src.get("NoJurnal", "-")
+            })
+
+    # =========================
+    # EXPORT EXCEL
+    # =========================
+    file_name = f"WIC_{cif}.xlsx"
+
+    with pd.ExcelWriter(file_name, engine="openpyxl") as writer:
+        pd.DataFrame(trxlimit_rows).to_excel(writer, sheet_name="TrxLimit", index=False)
+        pd.DataFrame(trxpbi_rows).to_excel(writer, sheet_name="TrxPBI", index=False)
+
+    result_text = (
+        f"✅ Data WIC berhasil diproses\n"
+        f"👤 CIF : {cif}\n"
+        f"💵 Total PBI USD : {Total_Pbi:,.2f}\n"
+        f"📁 Excel siap dikirim"
     )
-    
-    return result_text
+
+    return result_text, file_name
+
+def export_wic_to_excel(cif, hits):
+    trxlimit_rows = []
+    trxpbi_rows = []
+    total_pbi = 0
+    for hit in hits:
+        src = hit["_source"]
+        index_name = hit["_index"]
+        # ======================================
+        # TRX LIMIT
+        # ======================================
+        if "ceklimit" in index_name:
+            request_time = datetime.strptime(
+                src.get('RequestTime'),
+                '%Y-%m-%dT%H:%M:%S.%fZ'
+            ).strftime('%d-%m-%Y %H:%M:%S')
+            trxlimit_rows.append({
+                "RequestTime": request_time,
+                "CCY1": src.get("CCY1", "-"),
+                "CCY2": src.get("CCY2", "-"),
+                "CIF": src.get("CIF", "-"),
+                "NoRek": src.get("Norek", "-"),
+                "Rate": float(src.get("Rate", 0)),
+                "NominalUSD": float(src.get("NominalEqUSD", 0)),
+                "NominalIDR": float(src.get("Nominal", 0))
+            })
+        # ======================================
+        # TRX PBI
+        # ======================================
+        else:
+            date_time = datetime.strptime(
+                src.get('DateTime'),
+                '%Y-%m-%dT%H:%M:%S.%fZ'
+            ).strftime('%d-%m-%Y %H:%M:%S')
+            nominal_usd = float(src.get("NominalEqUSD", 0))
+            total_pbi += nominal_usd
+            trxpbi_rows.append({
+                "DateTime": date_time,
+                "CCY1": src.get("CCY1", "-"),
+                "CCY2": src.get("CCY2", "-"),
+                "CIF": src.get("CIF", "-"),
+                "NoRek": src.get("NoRek", "-"),
+                "Rate": float(src.get("Rate", 0)),
+                "NominalUSD": nominal_usd,
+                "NominalIDR": float(src.get("Nominal", 0)),
+                "NoJurnal": src.get("NoJurnal", "-")
+            })
+    # ======================================
+    # DATAFRAME
+    # ======================================
+    df_limit = pd.DataFrame(trxlimit_rows)
+    df_pbi = pd.DataFrame(trxpbi_rows)
+    # ======================================
+    # NAMA FILE
+    # ======================================
+    file_name = f"WIC_{cif}.xlsx"
+    # ======================================
+    # EXPORT 2 SHEET
+    # ======================================
+    with pd.ExcelWriter(file_name, engine="openpyxl") as writer:
+        df_limit.to_excel(
+            writer,
+            sheet_name="TrxLimit",
+            index=False
+        )
+        df_pbi.to_excel(
+            writer,
+            sheet_name="TrxPBI",
+            index=False
+        )
+    return file_name, total_pbi
 
 def getDashboardScreenshot(app_name):
     print(app_name)

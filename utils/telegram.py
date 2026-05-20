@@ -1,11 +1,30 @@
 from config.settings import BASE_URL,PICT_DIR
 from utils.http_utils import safe_post, safe_post_pict
-
+import requests
 from typing import Optional, Tuple, Dict, Any
 
 class TelegramAPIError(Exception):
     pass
 
+def send_document(chat_id, file):
+
+    url = f"{BASE_URL}/sendDocument"
+
+    data = {
+        "chat_id": chat_id
+    }
+
+    files = {
+        "document": file
+    }
+
+    response = requests.post(
+        url,
+        data=data,
+        files=files
+    )
+
+    return response.json()
 
 def send_message(chat_id: int, text: str, reply_markup: Optional[Dict[str, Any]] = None,
                  parse_mode: Optional[str] = "Markdown") -> Tuple[int, Dict[str, Any]]:

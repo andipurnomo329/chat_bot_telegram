@@ -2,6 +2,7 @@ from utils.helper import *
 from bot.menu_builder import build_dynamic_menu
 from bot.callback_handler import *
 from bot.elk_getdata import *
+from utils.telegram import send_message, delete_message, send_document
 
 WAITING_MSG = "🤖 Mohon ditunggu ..."
 CAPTURE_DASHBOARD_MSG = "🤖 Sedang mengambil screenshot dashboard ..."
@@ -78,12 +79,18 @@ def cmd_notifcc(chat_id, user_id, username):
 
 @require_auth
 def cmd_wic(chat_id, user_id, username, cif):
+
     mid, message = send_message(chat_id, WAITING_MSG)
     try:
-        data = get_wic_data(cif)
-        send_message(chat_id, data)
+        result_text, file_name = get_wic_data(cif)
+        if not file_name:
+            send_message(chat_id, result_text)
+            return 
+        send_message(chat_id, result_text)
+        with open(file_name, "rb") as f:
+            send_document(chat_id, f)
     except Exception as e:
-        send_message(chat_id, f"❌ {e}")
+        send_message(chat_id, f"❌ ERROR: {str(e)}")
     finally:
         delete_message(
             chat_id=message["chat"]["id"],
@@ -91,7 +98,6 @@ def cmd_wic(chat_id, user_id, username, cif):
         )
 
 def handle_message(update, menu_message_id):
-
     msg = update.get("message")
 
     if not msg:
