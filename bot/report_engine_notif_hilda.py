@@ -26,15 +26,14 @@ def es_api_for_rqst(http, method, path, body=None):
         return {"error": str(e)}
 
 
-def cmd_report_engine_notif(chat_id, user_id, username):
+def cmd_report_engine_notif(chat_id, user_id, username, interval=None):
     set_time_for_report = (datetime.now() - timedelta(days=14)).strftime("%Y-%m-%dT%H:%M:%S")
     query_body = {
         "size":0,
         "query": {
             "bool": {
                 "must": [
-                    {"term": {"sendingtype.keyword": "4"}},
-                    {"term": {"status": 0}},
+                    {"term": {"responseMaverick": 1}},
                     {
                         "range": {
                             "@timestamp": {
@@ -50,15 +49,15 @@ def cmd_report_engine_notif(chat_id, user_id, username):
                 "value_count": {"field": "_id"}  # hitung jumlah dokumen
             },
             "avg_responsetime": {
-                "avg": {"field": "responsetime"}
+                "avg": {"field": "lifespan"}
             }
         }
     }
 
     result = es_api_for_rqst(http, "GET", "/log-enginenotif*/_search", query_body)
 
-    jumlah_mvrk = result["aggregations"]["jumlah_mvrk"]["doc_count"]
-    avg_responsetime = result["aggregations"]["avg_responsetime"]["value"]
+    jumlah_mvrk = result.get("aggregations", {}).get("jumlah_mvrk", {}).get("value", 0)
+    avg_responsetime = result.get("aggregations", {}).get("avg_responsetime", {}).get("value", None)
 
     output = BytesIO()
     with xlsxwriter.Workbook(output,{'in_memory':True}) as workbook:
@@ -85,8 +84,9 @@ def handle_message(update: Update, context: CallbackContext):
     if text.startswith("/engine_notif_"):
         param = text.split("_", 1)[1]  
         cmd_report_engine_notif(chat_id, user_id, username, interval=param)
+    elif text == "/report_engine_notif":
+        cmd_report_engine_notif(chat_id, user_id, username)
 
-# Main loop polling
 def main():
     updater = Updater(TOKEN, use_context=True)
     dp = updater.dispatcher
