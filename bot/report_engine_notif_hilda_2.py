@@ -146,6 +146,10 @@ def cmd_report_engine_notif(chat_id, user_id, username, interval=None):
     output = BytesIO()
     with xlsxwriter.Workbook(output, {"in_memory": True}) as workbook:
         ws = workbook.add_worksheet("Report")
+
+        # Buat format angka dengan 2 digit desimal
+        num_format_2dec = workbook.add_format({'num_format': '0.00'})
+        
         headers = [
             "no", "date",
             "mvrk_success", "mvrk_fail", "mvrk_total",
@@ -178,7 +182,10 @@ def cmd_report_engine_notif(chat_id, user_id, username, interval=None):
                 avg_rt
             ]
             for col, val in enumerate(row):
-                ws.write(i, col, val)
+                if col == len(row)-1:
+                    ws.write(i, col, val, num_format_2dec)
+                else:
+                    ws.write(i,col,val)
 
     output.seek(0)
     bot.send_document(chat_id, output, filename="report_engine_notif_combined.xlsx")
