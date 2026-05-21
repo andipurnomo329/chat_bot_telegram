@@ -10,7 +10,7 @@ ES_HOST = "https://192.168.45.15:443"
 ES_USERNAME="app_super"
 ES_PASSWORD="appsuperpassw0rd"
 
-http = urllib3.PoolManager()
+http = urllib3.PoolManager(cert_reqs='CERT_NONE', assert_hostname=False)
 
 TOKEN = "8469715430:AAGpWw9g4zTBIe51NlA7fRACK9Jy7I1eMZw"
 bot = Bot(token=TOKEN)
@@ -27,49 +27,65 @@ def es_api_for_rqst(http, method, path, body=None):
 
 
 def cmd_report_engine_notif(chat_id, user_id, username, interval=None):
-    set_time_for_report = (datetime.now() - timedelta(days=14)).strftime("%Y-%m-%dT%H:%M:%S")
+    # set_time_for_report = (datetime.now() - timedelta(days=14)).strftime("%Y-%m-%dT%H:%M:%S")
+    # now_time = datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
     query_body = {
-        "size":0,
+        "size": 0,
         "query": {
             "bool": {
                 "must": [
                     {"term": {"responseMaverick": 1}},
-                    {
-                        "range": {
-                            "@timestamp": {
-                                "gte": set_time_for_report
-                            }
-                        }
-                    }
+                    {"range": {"date_origin": {"gte": "now-14d/d", "lte": "now/d"}}}
                 ]
             }
         },
         "aggs": {
-            "jumlah_mvrk": {
-                "value_count": {"field": "_id"}  # hitung jumlah dokumen
-            },
-            "avg_responsetime": {
-                "avg": {"field": "lifespan"}
+            "per_day": {
+                "date_histogram": {
+                    "field": "date_origin",
+                    "fixed_interval": "1d",
+                    "min_doc_count": 0,   # penting: biar hari kosong tetap muncul
+                    "extended_bounds": {
+                       "min": "now-14d/d",
+                       "max": "now/d"
+                    }
+                },
+                "aggs": {
+                    "jumlah_mvrk": {"value_count": {"field": "_id"}},
+                    "avg_responsetime": {"avg": {"field": "lifespan"}}
+                }
             }
         }
+
     }
 
     result = es_api_for_rqst(http, "GET", "/log-enginenotif*/_search", query_body)
 
-    jumlah_mvrk = result.get("aggregations", {}).get("jumlah_mvrk", {}).get("value", 0)
-    avg_responsetime = result.get("aggregations", {}).get("avg_responsetime", {}).get("value", None)
+    # Debug: tampilkan hasil query di terminal
+    print("=== RAW RESULT ===")
+    print(json.dumps(result, indent=2))
+
+    buckets = result.get("aggregations", {}).get("per_day", {}).get("buckets", [])
+    print("=== BUCKETS ===")
+    for b in buckets:
+        print(b["key_as_string"], b.get("jumlah_mvrk", {}).get("value", 0))
 
     output = BytesIO()
-    with xlsxwriter.Workbook(output,{'in_memory':True}) as workbook:
+    with xlsxwriter.Workbook(output, {'in_memory': True}) as workbook:
         worksheet = workbook.add_worksheet("Report")
-        headers = ["No","datetime","jumla_mvrk","avg_responsetime"]
-        for col,h in enumerate(headers):
-            worksheet.write(0,col,h)
+        headers = ["no", "datetime", "jumlah_mvrk", "avg_responsetime"]
+        for col, h in enumerate(headers):
+            worksheet.write(0, col, h)
 
-        worksheet.write(1,0,1)
-        worksheet.write(1,1,datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
-        worksheet.write(1,2,jumlah_mvrk)
-        worksheet.write(1,3,avg_responsetime)
+        for i, bucket in enumerate(buckets, start=1):
+            date_str = bucket["key_as_string"][:10]  # ambil YYYY-MM-DD
+            jumlah_mvrk = bucket.get("jumlah_mvrk", {}).get("value", bucket.get("doc_count", 0))
+            avg_responsetime = bucket.get("avg_responsetime", {}).get("value", 0) or 0
+
+            worksheet.write(i, 0, i)
+            worksheet.write(i, 1, date_str)
+            worksheet.write(i, 2, jumlah_mvrk)
+            worksheet.write(i, 3, avg_responsetime)
 
     output.seek(0)
 
