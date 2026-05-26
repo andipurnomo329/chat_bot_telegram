@@ -221,7 +221,7 @@ def parse_log_buckets(result):
             "avg_rt":       day["avg_responsetime"]["value"] or 0
         }
     for d, vals in out.items():
-        print(f"[DEBUG Validation] Date={d} "
+        print(f"[DEBUG Compare log-enginenotif] Date={d} "
               f"Mvrk: success={vals['mvrk_success']} fail={vals['mvrk_fail']} "
               f"SMS: success={vals['sms_success']} fail={vals['sms_fail']} "
               f"Email: success={vals['email_success']} fail={vals['email_fail']} "
@@ -260,7 +260,7 @@ def cmd_report_engine_notif(chat_id, user_id, username, interval=None):
     output = BytesIO()
     with xlsxwriter.Workbook(output, {"in_memory": True}) as workbook:
         ws = workbook.add_worksheet("Report")
-        ws2 = workbook.add_worksheet("Validation")
+        ws2 = workbook.add_worksheet("Compare log-enginenotif")
 
         # Buat format angka dengan 2 digit desimal
         num_format_2dec = workbook.add_format({'num_format': '0.00'})
@@ -353,12 +353,12 @@ def cmd_report_engine_notif(chat_id, user_id, username, interval=None):
                     else:
                         ws2.write(i,col,val)
                 
-                print(f"[DEBUG Excel Validation] Row {i} Date={d} "
+                print(f"[DEBUG Excel Compare log-enginenotif] Row {i} Date={d} "
                     f"Mvrk={ms}/{mf} SMS={ss}/{sf} Email={es}/{ef} "
                     f"Total={ts}/{tf} AvgRT={avg_rt:.2f}")
 
     if not log_buckets:
-        print("DEBUG: Tidak ada data untuk Validation.")
+        print("DEBUG: Tidak ada data untuk Compare log-enginenotif.")
 
     output.seek(0)
     bot.send_document(chat_id, output, filename="report_engine_notif_combined.xlsx")
