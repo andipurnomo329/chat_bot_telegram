@@ -37,8 +37,8 @@ def build_query_by_sendingtype(sendingtype):
                     {
                         "range": {
                             "trxtime": {
-                                "gte": "now-14d/d",
-                                "lte": "now/d"
+                                "gte": "now-31d/d",
+                                "lte": "now-1d/d"
                             }
                         }
                     }
@@ -75,8 +75,8 @@ def build_query_avg_rt():
         "query": {
             "range": {
                 "trxtime": {
-                    "gte": "now-14d/d",
-                    "lte": "now/d"
+                    "gte": "now-31d/d",
+                    "lte": "now-1d/d"
                 }
             }
         },
@@ -126,8 +126,8 @@ def build_query_log():
         "query": {
             "range": {
                 "date_origin": {
-                    "gte": "now-14d/d",
-                    "lte": "now/d"
+                    "gte": "now-31d/d",
+                    "lte": "now-1d/d"
                 }
             }
         },
