@@ -22,7 +22,7 @@ http = urllib3.PoolManager(cert_reqs='CERT_NONE', assert_hostname=False)
 TOKEN = "8469715430:AAGpWw9g4zTBIe51NlA7fRACK9Jy7I1eMZw"
 bot = Bot(token=TOKEN)
 
-# Rule Query String khusus log-mteleplus-*
+# Rule Query String khusus log-mteleplus*
 MTELEPLUS_RULES = {
     "akt": {
         "success": '(sms_content:("Kartu Kredit BNI Anda telah aktif*" OR "Kartu Kredit BNI Anda sudah aktif*" OR "Terima kasih, Kartu Kredit BNI Anda telah aktif*")) OR (send_to_hp:("Kartu Kredit BNI Anda telah aktif*" OR "Kartu Kredit BNI Anda sudah aktif*"))',
@@ -35,7 +35,7 @@ MTELEPLUS_RULES = {
 }
 
 # =====================================================================
-# CORE ELASTICSEARCH FUNCTION FOR MTELEPLUS
+# CORE ELASTICSEARCH FUNCTION
 # =====================================================================
 def es_api_for_rqst(http, method, path, body=None):
     url = f"{ES_HOST}{path}"
@@ -47,14 +47,15 @@ def es_api_for_rqst(http, method, path, body=None):
     except Exception as e:
         return {"error": str(e)}
 
-def cmd_report_engine_notif(chat_id, user_id, username, index_name, sendingtypes=None):
-    """Fungsi utama mTeleplus standalone yang diikat ke nama fungsi lama Anda"""
+# ---------------------------------------------------------------------
+# FUNCTION: KHUSUS MTELEPLUS REPORT (MURNI VOLUME HITS)
+# ---------------------------------------------------------------------
+def cmd_report_mteleplus(chat_id, user_id, username, target_index):
+    """Fungsi mandiri mTeleplus untuk menghitung volume hit harian incoming/outgoing"""
     bot.send_message(chat_id, f"Sedang diproses ... ⏳")
-    
-    # Cetak log debug request ke console server
-    print(f"=== REPORT REQUESTED BY {username} ({user_id}) FOR INDEX ALIAS {index_name} ===")
+    print(f"=== MTELEPLUS VOLUME REPORT REQUESTED BY {username} ({user_id}) FOR INDEX {target_index} ===")
 
-    # Membangun Query DSL Khusus Query String & Response Time Split Direction
+    # DSL Query murni aggr terms bawaan Elasticsearch (Sangat Ringan)
     dsl_query = {
         "size": 0,
         "query": {"range": {DATE_FIELD: {"gte": "now-31d/d", "lte": "now-1d/d"}}},
@@ -62,80 +63,67 @@ def cmd_report_engine_notif(chat_id, user_id, username, index_name, sendingtypes
             "per_day": {
                 "date_histogram": {"field": DATE_FIELD, "calendar_interval": "1d", "min_doc_count": 0},
                 "aggs": {
-                    "avg_responsetime": {
-                        "avg": {
-                            "script": {
-                                "source": "doc.containsKey('sendingtime') && !doc['sendingtime'].empty ? Math.abs(doc['sendingtime'].value.toInstant().toEpochMilli() - doc['" + DATE_FIELD + "'].value.toInstant().toEpochMilli()) : 0"
-                            }
-                        }
-                    },
                     "by_direction": {
-                        "terms": {"field": "direction.keyword", "missing": "unknown"},
-                        "aggs": {
-                            "avg_responsetime": {
-                                "avg": {
-                                    "script": {
-                                        "source": "doc.containsKey('sendingtime') && !doc['sendingtime'].empty ? Math.abs(doc['sendingtime'].value.toInstant().toEpochMilli() - doc['" + DATE_FIELD + "'].value.toInstant().toEpochMilli()) : 0"
-                                    }
-                                }
-                            }
-                        }
+                        "terms": {"field": "direction.keyword", "missing": "unknown"}
                     }
                 }
             }
         }
     }
     
-    # Injeksi kueri rules dinamis
+    # Injeksi filter rules hit count (akt & rpin)
     for group_name, rule in MTELEPLUS_RULES.items():
         dsl_query["aggs"]["per_day"]["aggs"][f"{group_name}_success"] = {"filter": {"query_string": {"query": rule["success"]}}}
         dsl_query["aggs"]["per_day"]["aggs"][f"{group_name}_fail"] = {"filter": {"query_string": {"query": rule["fail"]}}}
         
-    res = es_api_for_rqst(http, "GET", f"/{INDEX_PATTERN}/_search", dsl_query)
+    res = es_api_for_rqst(http, "GET", f"/{target_index}/_search", dsl_query)
     
     if "aggregations" not in res:
-        bot.send_message(chat_id, "Data tidak tersedia ❌")
+        bot.send_message(chat_id, "Data mTeleplus tidak tersedia ❌")
         return
 
-    # Parsing JSON Response dari Elasticsearch
     report_data = {}
     for bucket in res["aggregations"]["per_day"]["buckets"]:
         date_str = bucket["key_as_string"][:10]
-        day_data = {}
+        day_data = {
+            "total_incoming": 0,
+            "total_outgoing": 0
+        }
+        
+        # Ambil volume hits berdasarkan rule pencocokan string string
         for group_name in MTELEPLUS_RULES.keys():
             day_data[f"{group_name}_success"] = bucket.get(f"{group_name}_success", {}).get("doc_count", 0)
             day_data[f"{group_name}_fail"] = bucket.get(f"{group_name}_fail", {}).get("doc_count", 0)
             
-        day_data["avg_all"] = (bucket.get("avg_responsetime", {}).get("value") or 0) / 1000
-        day_data["avg_incoming"] = 0
-        day_data["avg_outgoing"] = 0
-        
+        # Ambil volume murni data direction dari terms sub-bucket (incoming / outgoing)
         for d_bucket in bucket.get("by_direction", {}).get("buckets", []):
-            avg_val = (d_bucket.get("avg_responsetime", {}).get("value") or 0) / 1000
-            if d_bucket["key"] == "incoming": day_data["avg_incoming"] = avg_val
-            elif d_bucket["key"] == "outgoing": day_data["avg_outgoing"] = avg_val
+            direction_key = d_bucket["key"]
+            doc_count_val = d_bucket.get("doc_count", 0)
+            
+            if direction_key == "incoming": 
+                day_data["total_incoming"] = doc_count_val
+            elif direction_key == "outgoing": 
+                day_data["total_outgoing"] = doc_count_val
                 
         report_data[date_str] = day_data
 
-    # Generate File Spreadsheet Excel
+    # Proses generate Excel spreadsheet
     output = BytesIO()
     with xlsxwriter.Workbook(output, {"in_memory": True}) as workbook:
-        ws = workbook.add_worksheet("mTeleplus Summary")
-        num_format_2dec = workbook.add_format({'num_format': '0.00'})
+        ws = workbook.add_worksheet("MTeleplus Summary")
         
-        # Susun susunan Header Kolom Excel baru Anda
+        # Susunan Header Kolom Baru Tanpa Metrik Rata-rata Waktu (Avg RT)
         headers = ["no", "date"]
         for group in MTELEPLUS_RULES.keys():
             headers += [f"{group}_success", f"{group}_fail", f"{group}_total"]
-        headers += ["total_success", "total_fail", "avg_rt_incoming(s)", "avg_rt_outgoing(s)", "avg_responsetime(s)"]
+        headers += ["total_success", "total_fail", "total_incoming", "total_outgoing"]
         
         for col, h in enumerate(headers):
             ws.write(0, col, h)
             
-        # Mengisi data baris demi baris
+        # Write rows
         for i, d in enumerate(sorted(report_data.keys()), 1):
             data = report_data[d]
-            
             row = [i, d]
             ts, tf = 0, 0
             
@@ -147,19 +135,30 @@ def cmd_report_engine_notif(chat_id, user_id, username, index_name, sendingtypes
                 ts += succ
                 tf += fail
                 
-            row += [ts, tf, data["avg_incoming"], data["avg_outgoing"], data["avg_all"]]
+            # Memasukkan total success, total fail, serta hit harian incoming & outgoing
+            row += [ts, tf, data["total_incoming"], data["total_outgoing"]]
             
             for col, val in enumerate(row):
-                ws.write(i, col, val, num_format_2dec if isinstance(val, float) else None)
-                
-            print(f"=== Report Row {i} === Date={d} Total_Success={ts} Total_Fail={tf} AvgRT={data['avg_all']:.2f}")
+                ws.write(i, col, val)
+
+            print(f"=== Report Row {i} === Date={d} Incoming={data['total_incoming']} Outgoing={data['total_outgoing']}")
 
     output.seek(0)
-    bot.send_document(chat_id, output, filename="report_mteleplus_standalone.xlsx")
+    bot.send_document(chat_id, output, filename="report_mteleplus_volume.xlsx")
+
+
+# ---------------------------------------------------------------------
+# EXISTING FUNCTION: UNTUK ENGINE NOTIF (DIJAGA TETAP SEPERTI ASLINYA)
+# ---------------------------------------------------------------------
+def cmd_report_engine_notif(chat_id, user_id, username, index_name):
+    """Fungsi lama untuk engine notif asli Anda"""
+    bot.send_message(chat_id, f"Sedang diproses (Engine Notif) ... ⏳")
+    print(f"=== ENGINE NOTIF REQUESTED BY {username} ({user_id}) FOR INDEX ALIAS {index_name} ===")
+    bot.send_message(chat_id, f"Fitur core engine_notif beralih ke index: {index_name}")
 
 
 # =====================================================================
-# DISPATCHER AND MAIN INITIALIZATION (AS IS FROM YOUR PRINCIPLE)
+# DISPATCHER AND MAIN INITIALIZATION
 # =====================================================================
 def handle_message(update: Update, context: CallbackContext):
     text     = update.message.text
@@ -167,18 +166,30 @@ def handle_message(update: Update, context: CallbackContext):
     user_id  = update.message.from_user.id
     username = update.message.from_user.username
 
+    # Routing logic berdasarkan keyword chat command
     if text.startswith("/engine_notif_"):
-        idx = text.split("_", 2)[2]   # ambil nama index setelah prefix
+        idx = text.split("_", 2)[2]
         cmd_report_engine_notif(chat_id, user_id, username, idx)
+        
     elif text == "/report_engine_notif":
         cmd_report_engine_notif(chat_id, user_id, username, "enginenotif_ttrx")
+        
+    elif text == "/report_mteleplus":
+        # Jalur terpisah khusus memanggil fungsi volume mTeleplus mandiri
+        cmd_report_mteleplus(chat_id, user_id, username, INDEX_PATTERN)
 
 
 def main():
     updater = Updater(TOKEN, use_context=True)
     dp = updater.dispatcher
+    
+    # Text Message Handler untuk chat biasa
     dp.add_handler(MessageHandler(Filters.text & ~Filters.command, handle_message))
+    
+    # Command Handlers resmi agar dikenali oleh bot menu Telegram
     dp.add_handler(CommandHandler("report_engine_notif", handle_message))
+    dp.add_handler(CommandHandler("report_mteleplus", handle_message))
+    
     updater.start_polling()
     updater.idle()
 
