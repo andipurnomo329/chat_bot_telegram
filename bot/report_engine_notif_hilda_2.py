@@ -90,20 +90,20 @@ def build_query_avg_rt(year_offset=1):
                 "date_histogram": {
                     "field": "trxtime",
                     "calendar_interval": "1d",
-                    "min_doc_count": 0   # supaya hari kosong tetap muncul
+                    "min_doc_count": 0
                 },
                 "aggs": {
-                    "avg_responsetime": {   # gabungan semua channel
+                    "avg_responsetime": {   # 1. Gabungan semua channel (DIBALIK)
                         "avg": {
                             "script": {
                                 "source": (
-                                    "doc['sendingtime'].value.toInstant().toEpochMilli() - "
-                                    "doc['trxtime'].value.toInstant().toEpochMilli()"
+                                    "doc['trxtime'].value.toInstant().toEpochMilli() - "
+                                    "doc['sendingtime'].value.toInstant().toEpochMilli()"
                                 )
                             }
                         }
                     },
-                    "by_sendingtype": {     # breakdown per channel
+                    "by_sendingtype": {     # 2. Breakdown per channel (DIBALIK)
                         "terms": {
                             "field": "sendingtype.keyword"
                         },
@@ -112,8 +112,8 @@ def build_query_avg_rt(year_offset=1):
                                 "avg": {
                                     "script": {
                                         "source": (
-                                            "doc['sendingtime'].value.toInstant().toEpochMilli() - "
-                                            "doc['trxtime'].value.toInstant().toEpochMilli()"
+                                            "doc['trxtime'].value.toInstant().toEpochMilli() - "
+                                            "doc['sendingtime'].value.toInstant().toEpochMilli()"
                                         )
                                     }
                                 }
