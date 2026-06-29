@@ -70,7 +70,7 @@ def build_date_range(date_field,year_offset=0,days=365):
         }
 
 
-def build_query(cfg, sendingtype=None,year_offset=1):
+def build_query(cfg, sendingtype=None,year_offset=0):
     date_field = cfg["date_field"]
     range_query = build_date_range(date_field,year_offset)
     
@@ -113,7 +113,7 @@ def build_query(cfg, sendingtype=None,year_offset=1):
     
     return query
     
-def build_query_avg_rt(cfg,year_offset=1):
+def build_query_avg_rt(cfg,year_offset=0):
     date_field = cfg["date_field"]
     sending_field = cfg.get("sending_field")
     agg_name = cfg.get("agg_name", "per_day_avg_rt")
@@ -195,7 +195,7 @@ def parse_avg_rt_buckets(result, cfg):
     return out
 
 
-def cmd_report_engine_notif(chat_id, user_id, username, index_name, sendingtypes=None,year_offset=1):
+def cmd_report_engine_notif(chat_id, user_id, username, index_name, sendingtypes=None,year_offset=0):
 
     bot.send_message(chat_id, f"Sedang diproses ... ⏳")
     cfg = INDEX_CONFIG[index_name]
@@ -205,7 +205,7 @@ def cmd_report_engine_notif(chat_id, user_id, username, index_name, sendingtypes
     if cfg.get("sending_field"):   # untuk enginenotif_ttrx
         sendingtypes_map = {1: "sms", 2: "email", 4: "mvrk"}
         for st, name in sendingtypes_map.items():
-            q = build_query(cfg, sendingtype=st,year_offset=1)
+            q = build_query(cfg, sendingtype=st,year_offset=0)
             res = es_api_for_rqst(http, "GET", f"/{cfg['index']}/_search", q)
             print(f"=== RAW RESULT STATUS ENGINENOTIF TTRX ===")
             print(json.dumps(res, indent=2)) 
@@ -216,14 +216,14 @@ def cmd_report_engine_notif(chat_id, user_id, username, index_name, sendingtypes
                 status_buckets[d][f"{name}_success"] = vals.get("general_success", 0)
                 status_buckets[d][f"{name}_fail"]    = vals.get("general_fail", 0)
     else:   # untuk logenginenotif atau custom_index
-        q = build_query(cfg, year_offset=1)
+        q = build_query(cfg, year_offset=0)
         res = es_api_for_rqst(http, "GET", f"/{cfg['index']}/_search", q)
         print("=== RAW RESULT STATUS LOGENGINENOTIF ATAU CUSTOM INDEX ===")
         print(json.dumps(res, indent=2))
         status_buckets = parse_multi_status_buckets(res, cfg)
 
     # Query avg response time
-    avg_query = build_query_avg_rt(cfg,year_offset=1)
+    avg_query = build_query_avg_rt(cfg,year_offset=0)
     result_avg = es_api_for_rqst(http, "GET", f"/{cfg['index']}/_search", avg_query)
     # Debug print untuk avg response time
     print("=== RAW RESULT AVG RESPONSE TIME ===")
@@ -232,13 +232,13 @@ def cmd_report_engine_notif(chat_id, user_id, username, index_name, sendingtypes
 
     # Compare dengan logenginenotif
     cfg_log = INDEX_CONFIG["logenginenotif"]
-    query_log = build_query(cfg_log,year_offset=1)
+    query_log = build_query(cfg_log,year_offset=0)
     result_log = es_api_for_rqst(http, "GET", f"/{cfg_log['index']}/_search", query_log)
     # Debug print untuk logenginenotif status
     print("=== RAW RESULT LOGENGINENOTIF STATUS ===")
     # print(json.dumps(result_log, indent=2))
     log_buckets = parse_multi_status_buckets(result_log, cfg_log)
-    avg_query_log = build_query_avg_rt(cfg_log,year_offset=1)
+    avg_query_log = build_query_avg_rt(cfg_log,year_offset=0)
     result_avg_log = es_api_for_rqst(http, "GET", f"/{cfg_log['index']}/_search", avg_query_log)
     # Debug print untuk logenginenotif avg response time
     print("=== RAW RESULT LOGENGINENOTIF AVG RESPONSE TIME ===")
@@ -360,7 +360,7 @@ def handle_message(update: Update, context: CallbackContext):
     
     parts = text.split()
     cmd = parts[0]
-    year_offset = 1
+    year_offset = 0
     if len(parts) > 1 and parts[1].endswith("y"):
         try:
             year_offset = int(parts[1][:-1])
