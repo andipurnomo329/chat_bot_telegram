@@ -1,5 +1,6 @@
 import base64
 import json
+import os
 import urllib3
 from telegram import Bot, Update
 from telegram.ext import (
@@ -18,13 +19,10 @@ ES_USERNAME = "app_super"
 ES_PASSWORD = "appsuperpassw0rd"
 
 TELEGRAM_TOKEN = "8469715430:AAGpWw9g4zTBIe51NlA7fRACK9Jy7I1eMZw"
-
-# ⚠️ GANTI DENGAN CHAT ID / ID GRUP TELEGRAM ANADA ⚠️
 AUTO_NOTIF_CHAT_ID = 1399365875
 
-# Cache KHUSUS untuk mencatat status yang SUDAH PERNAH DIKIRIM OTOMATIS
-# Perintah manual / tidak akan pernah menyentuh cache ini
-notified_auto_cache = set()
+# File lokal untuk persitensi cache agar tahan saat bot restart
+CACHE_FILE = "auto_notif_cache.json"
 
 # Nonaktifkan warning SSL Certificate
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
@@ -56,6 +54,34 @@ REQUIRED_JOBS = [
 
 
 # ================================
+# HELPER PERSISTENSI CACHE (FILE)
+# ================================
+def load_cache() -> set:
+    """Membaca cache dari file JSON jika ada."""
+    if os.path.exists(CACHE_FILE):
+        try:
+            with open(CACHE_FILE, "r") as f:
+                data = json.load(f)
+                return set(data)
+        except Exception as e:
+            print(f"[CACHE WARNING] Gagal membaca file cache: {e}")
+    return set()
+
+
+def save_cache(cache_set: set):
+    """Menyimpan cache ke file JSON."""
+    try:
+        with open(CACHE_FILE, "w") as f:
+            json.dump(list(cache_set), f)
+    except Exception as e:
+        print(f"[CACHE ERROR] Gagal menyimpan file cache: {e}")
+
+
+# Inisialisasi cache dari file saat bot pertama kali nyala
+notified_auto_cache = load_cache()
+
+
+# ================================
 # HELPER ELASTICSEARCH API
 # ================================
 def es_api_for_rqst(http, method, path, body=None):
@@ -81,9 +107,7 @@ def es_api_for_rqst(http, method, path, body=None):
 # FUNGSI CORE PENGECEKAN JOB ETL
 # ================================
 def fetch_and_evaluate_jobs(hours_back=24):
-    """Mengambil log Elasticsearch dan mengevaluasi status ke-8 job wajib."""
     cfg = ETL_INDEX_CONFIG
-
     query = {
         "size": 200,
         "sort": [{cfg["date_field"]: {"order": "desc"}}],
@@ -141,7 +165,6 @@ def fetch_and_evaluate_jobs(hours_back=24):
 # FUNGSI FORMATTING LAPORAN
 # ================================
 def send_report_check_etl(chat_id, job_status_map, hours_back=24, is_auto=False):
-    """Output laporan detail audit (menampilkan status 8 job dan jam selesainya)."""
     failed_jobs = []
     missing_jobs = []
     successful_jobs = []
@@ -172,7 +195,7 @@ def send_report_check_etl(chat_id, job_status_map, hours_back=24, is_auto=False)
             for f in failed_jobs:
                 msg += f"• `{f['job_name']}` (Selesai: `{f['end_time']}`)\n"
                 if f["error_msg"]:
-                    msg += f"  💬 _Err:_ `{str(f['error_msg'])[:100]}`\n"
+                    msg += f"   💬 _Err:_ `{str(f['error_msg'])[:100]}`\n"
             msg += "\n"
 
         if missing_jobs:
@@ -197,7 +220,6 @@ def send_report_check_etl(chat_id, job_status_map, hours_back=24, is_auto=False)
 
 
 def send_report_notif_gagal(chat_id, job_status_map, hours_back=24):
-    """Output ringkas khusus command manual /notif_gagal."""
     failed_jobs = []
     missing_jobs = []
 
@@ -235,17 +257,15 @@ def send_report_notif_gagal(chat_id, job_status_map, hours_back=24):
 
 
 # ================================
-# LOGIKA OTOMASI MURNI (BACKGROUND TASK)
+# LOGIKA OTOMASI MURNI
 # ================================
 def auto_trigger_notif(context: CallbackContext):
-    """Fungsi otomatis yang dijalankan oleh system scheduler."""
     global notified_auto_cache
     chat_id = AUTO_NOTIF_CHAT_ID
 
     try:
         job_status_map = fetch_and_evaluate_jobs(hours_back=24)
 
-        # Buat signature unik berdasarkan ID log dan jam selesai tiap job
         status_signature_list = []
         for req_job in sorted(REQUIRED_JOBS):
             if req_job in job_status_map:
@@ -258,17 +278,17 @@ def auto_trigger_notif(context: CallbackContext):
 
         current_auto_key = "|".join(status_signature_list)
 
-        # CEK: Apakah NOTIFIKASI OTOMATIS untuk state ini sudah pernah terkirim?
+        # Cek apakah state ini sudah pernah dikirim (meskipun bot pernah di-restart)
         if current_auto_key not in notified_auto_cache:
-            # Jika belum pernah dikirim secara OTOMATIS, kirimkan sekarang!
             send_report_check_etl(
                 chat_id=chat_id,
                 job_status_map=job_status_map,
                 hours_back=24,
                 is_auto=True,
             )
-            # Tandai bahwa state otomatis ini sudah terkirim
+            # Simpan ke memori dan tulis ke file lokal (JSON)
             notified_auto_cache.add(current_auto_key)
+            save_cache(notified_auto_cache)
             print("[OTOMASI] Notifikasi otomatis berhasil dikirimkan.")
         else:
             print("[OTOMASI] State log ini sudah pernah dikirim secara otomatis. Skip.")
@@ -305,7 +325,6 @@ def handle_message(update: Update, context: CallbackContext):
         job_status_map = fetch_and_evaluate_jobs(hours_back=hours_back)
 
         if cmd == "/check_etl_gagal":
-            # Panggilan manual TIDAK MENGUBAH / MENGISI notified_auto_cache
             send_report_check_etl(
                 chat_id, job_status_map, hours_back=hours_back, is_auto=False
             )
@@ -325,15 +344,11 @@ def main():
         MessageHandler(Filters.text & ~Filters.command, handle_message)
     )
 
-    # Scheduler Otomatis:
     job_queue = updater.job_queue
 
-    # 1. Jalankan LANGSUNG 1x (3 detik setelah bot aktif)
-    job_queue.run_once(auto_trigger_notif, when=3)
-
-    # 2. Pengecekan berulang tiap 15 menit untuk mendeteksi apakah ada log/status baru
-    # Jika ada log/status baru yang belum pernah terkirim OTOMATIS, ia akan langsung ditembakkan
-    job_queue.run_repeating(auto_trigger_notif, interval=900, first=10)
+    # Pengaturan toleransi latensi (misfire_grace_time) agar peringatan 'Run time missed' tidak muncul
+    job_queue.run_once(auto_trigger_notif, when=3, job_kwargs={'misfire_grace_time': 60})
+    job_queue.run_repeating(auto_trigger_notif, interval=900, first=10, job_kwargs={'misfire_grace_time': 60})
 
     print("Bot Berjalan... Menunggu pengecekan otomatis...")
     updater.start_polling()
