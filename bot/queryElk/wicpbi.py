@@ -1,9 +1,6 @@
 def wicQuery(cif):
-
     return {
-
-        "size": 10,
-
+        "size": 100,
         "_source": [
             "RequestTime",
             "DateTime",
@@ -17,21 +14,25 @@ def wicQuery(cif):
             "Nominal",
             "NoJurnal"
         ],
-
         "query": {
             "bool": {
-                "should": [
+                "must": [
+                    {
+                        "range": {
+                            "@timestamp": {
+                                "gte": "now/M",
+                                "lte": "now"
+                            }
+                        }
+                    },
                     {
                         "term": {
                             "CIF": str(cif)
                         }
                     }
-
-                ],
-                "minimum_should_match": 1
+                ]
             }
         },
-
         "sort": [
             {
                 "@timestamp": {

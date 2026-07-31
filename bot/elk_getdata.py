@@ -119,33 +119,26 @@ def get_notifcc():
     agg = data.get("aggregations", {}) \
               .get("by_sendingtype", {}) \
               .get("buckets", [])
-
     if not agg:
         return "No aggregation data found"
-
     result_text = "📨 *EngineNotif Status Summary (Last 30 minutes)*\n\n"
-
     for bucket in agg:
         sending_type = bucket.get("key")
         alias = sendingtype_map.get(sending_type, "unknown")
         statuses = bucket.get("status_count", {}).get("buckets", [])
-
         # Default values
         status_1 = 0
         status_0 = 0
         status_other = {}
-
         for s in statuses:
             key = str(s.get("key"))
             count = s.get("doc_count", 0)
-
             if key == "1":
                 status_1 = count
             elif key == "0":
                 status_0 = count
             else:
                 status_other[key] = count
-
         total = status_1 + status_0
         if total > 0:
             success_percent = (status_1 / total) * 100
@@ -153,14 +146,11 @@ def get_notifcc():
         else:
             success_percent = 0
             failed_percent = 0
-
         result_text += f"🔹 *SendingType {alias}*\n"
         result_text += f"   ✔️ Success : {status_1} ({success_percent:.2f}%)\n"
         result_text += f"   ❌ Failed  : {status_0} ({failed_percent:.2f}%)\n"
-
         for k, v in status_other.items():
             result_text += f"   ⚠️ Status {k}: {v}\n"
-
         result_text += "\n"
     return result_text
 
@@ -169,28 +159,21 @@ def get_mtel():
     agg = (data.get("aggregations", {})
                .get("by_channel", {})
                .get("buckets", []))
-
     if not agg:
         return "No aggregation data found"
-
     result_text = "📨 *Mtel Summary (Last 30 minutes)*\n\n"
-
     for bucket in agg:
         channel = bucket.get("key", "-")
         total_channel = bucket.get("doc_count", 0)
         result_text += f"*Channel:* `{channel}` — *Total:* {total_channel}\n"
         directions = bucket.get("by_direction", {}).get("buckets", [])
-
         if not directions:
             result_text += "  • No direction data\n"
             continue
-
         for d in directions:
             direction = d.get("key", "-")
             total_dir = d.get("doc_count", 0)
-
             result_text += f"  • `{direction}` → {total_dir}\n"
-
         result_text += "\n"  
     data2 = elastic_search(["log-mteleplus-*"], getSmsContentMtel())
     agg2 = data2.get('hits', {}).get('hits', [])
@@ -201,7 +184,6 @@ def get_mtel():
     #     sms_content = bucket.get("key", "-")
     #     total_sms = bucket.get("doc_count", 0)
     #     result_text += f"*SMS Content:* `{sms_content}` — *Total:* {total_sms}\n"   
-
     return result_text
 
 def get_ams_data():
@@ -212,51 +194,39 @@ def get_ams_data():
         used = fs["used"]["bytes"] / 1024 /  1024 / 1024
         total = fs["total"] / 1024 /  1024 / 1024
         usedPersent = (used / total) * 100
-
     status = "⚠️" if usedPersent > 80 else "✅"
-
     result_text += f"{status} *ORA_ARC:*{used:.2f} GB/ {total:.2f} GB ({usedPersent:.2f}%)\n"
     print(result_text)
     return result_text
 
 def get_wic_data(cif):
-
     Total_Pbi = 0
     trxlimit_rows = []
     trxpbi_rows = []
-
     data = elastic_search(
         ["wic-trx-pbi-ceklimit-*", "log-wic-trx-pbi*"],
         wicQuery(cif)
     )
-
     hits = data.get("hits", {}).get("hits", [])
-
     if not hits:
         return f"❌ Data CIF {cif} tidak ditemukan", None
-
     for hit in hits:
-
         src = hit["_source"]
         index_name = hit["_index"]
-
         # =========================
         # AMBIL TIME (SIMPLE INLINE)
         # =========================
         raw_time = src.get("RequestTime") or src.get("DateTime")
-
         if raw_time:
             dt = datetime.strptime(raw_time, "%Y-%m-%dT%H:%M:%S.%fZ").replace(tzinfo=timezone.utc)
             dt_wib = dt + timedelta(hours=7)
             time_str = dt_wib.strftime("%d-%m-%Y %H:%M:%S")
         else:
             time_str = "-"
-
         # =========================
         # TRX LIMIT
         # =========================
-        if "ceklimit" in index_name:
-
+        if "wic-trx-pbi-ceklimit" in index_name:
             trxlimit_rows.append({
                 "RequestTime": time_str,
                 "CCY1": src.get("CCY1", "-"),
@@ -267,15 +237,13 @@ def get_wic_data(cif):
                 "NominalUSD": float(src.get("NominalEqUSD", 0)),
                 "NominalIDR": float(src.get("Nominal", 0))
             })
-
+            
         # =========================
         # TRX PBI
         # =========================
         elif "log-wic-trx-pbi" in index_name:
-
             nominal_usd = float(src.get("NominalEqUSD", 0))
             Total_Pbi += nominal_usd
-
             trxpbi_rows.append({
                 "DateTime": time_str,
                 "CCY1": src.get("CCY1", "-"),
@@ -287,23 +255,20 @@ def get_wic_data(cif):
                 "NominalIDR": float(src.get("Nominal", 0)),
                 "NoJurnal": src.get("NoJurnal", "-")
             })
-
     # =========================
     # EXPORT EXCEL
     # =========================
-    file_name = f"WIC_{cif}.xlsx"
 
+    file_name = f"WIC_{cif}.xlsx"
     with pd.ExcelWriter(file_name, engine="openpyxl") as writer:
         pd.DataFrame(trxlimit_rows).to_excel(writer, sheet_name="TrxLimit", index=False)
         pd.DataFrame(trxpbi_rows).to_excel(writer, sheet_name="TrxPBI", index=False)
-
     result_text = (
         f"✅ Data WIC berhasil diproses\n"
         f"👤 CIF : {cif}\n"
         f"💵 Total PBI USD : {Total_Pbi:,.2f}\n"
         f"📁 Excel siap dikirim"
     )
-
     return result_text, file_name
 
 def export_wic_to_excel(cif, hits):

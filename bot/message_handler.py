@@ -130,9 +130,6 @@ def handle_message(update, menu_message_id):
         "/notifcc": lambda: cmd_notifcc(chat_id, user_id, username),
     }
 
-    if text in COMMANDS:
-        COMMANDS[text]()
-
     handler = COMMANDS.get(text)
     if handler:
-        handler()
+        return handler()
