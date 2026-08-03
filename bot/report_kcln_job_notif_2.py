@@ -109,12 +109,20 @@ def es_api_for_rqst(http, method, path, body=None):
 # ================================
 def fetch_and_evaluate_jobs(hours_back=24):
     cfg = ETL_INDEX_CONFIG
+    
+    # KITA REVISI QUERY: Filter langsung dari Elasticsearch agar tidak tertutup log lain!
+    should_clauses = [{"wildcard": {"*": f"*{job}*"}} for job in REQUIRED_JOBS]
+    
     query = {
-        "size": 200,
+        "size": 500,  # Naikkan batas jika perlu
         "sort": [{cfg["date_field"]: {"order": "desc"}}],
         "query": {
-            "range": {cfg["date_field"]: {"gte": f"now-{hours_back}h", "lte": "now"}}
-        },
+            "bool": {
+                "must": [
+                    {"range": {cfg["date_field"]: {"gte": f"now-{hours_back}h", "lte": "now"}}}
+                ]
+            }
+        }
     }
 
     res = es_api_for_rqst(http, "GET", f"/{cfg['index']}/_search", query)
@@ -125,22 +133,17 @@ def fetch_and_evaluate_jobs(hours_back=24):
     for hit in hits:
         doc_id = hit.get("_id", "")
         source = hit.get("_source", {})
-        job_name = (
-            source.get("job_name")
-            or source.get("JOB_NAME")
-            or source.get("filename")
-            or source.get("FILENAME")
-            or "N/A"
-        )
+        
+        # Ubah seluruh isi dokumen menjadi string JSON lowercase untuk pencarian cepat
+        source_str_lower = json.dumps(source).lower()
+
         status = (
             source.get(cfg["status_field"])
             or source.get("status")
             or source.get("STATUS")
             or "UNKNOWN"
         )
-        error_msg = source.get(cfg["error_msg_field"]) or source.get(
-            "ERROR_MESSAGE"
-        )
+        error_msg = source.get(cfg["error_msg_field"]) or source.get("ERROR_MESSAGE") or source.get("error_message")
         end_time = (
             source.get("end_time")
             or source.get("END_TIME")
@@ -149,11 +152,12 @@ def fetch_and_evaluate_jobs(hours_back=24):
         )
 
         for req_job in REQUIRED_JOBS:
-            if req_job.lower() in str(job_name).lower():
+            # Pengecekan fleksibel: Jika nama file sh ada di dalam isi dokumen log
+            if req_job.lower() in source_str_lower:
                 if req_job not in job_status_map:
                     job_status_map[req_job] = {
                         "doc_id": doc_id,
-                        "job_name": job_name,
+                        "job_name": req_job,
                         "status": str(status).upper(),
                         "error_msg": error_msg,
                         "end_time": end_time,
@@ -207,7 +211,7 @@ def send_report_check_etl(chat_id, job_status_map, hours_back=24, is_auto=False)
     else:
         msg += f"✅ *STATUS KESELURUHAN: BERHASIL LENGKAP*\n\n"
 
-    msg += f"📋 *Rincian Ke-8 Job ETL Wajib:*\n"
+    msg += f"📋 *Rincian Ke-9 Job ETL Wajib:*\n"
     for req_job in REQUIRED_JOBS:
         if req_job in job_status_map:
             st = job_status_map[req_job]["status"]
