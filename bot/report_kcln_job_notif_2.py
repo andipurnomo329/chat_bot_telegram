@@ -40,7 +40,7 @@ ETL_INDEX_CONFIG = {
     "fail_value": "GAGAL",
 }
 
-# DAFTAR 8 JOB WAJIB (REQUIRED JOBS)
+# DAFTAR 9 JOB WAJIB (REQUIRED JOBS)
 REQUIRED_JOBS = [
     "run_edw_dblink.sh",
     "get_dump_file.sh",
