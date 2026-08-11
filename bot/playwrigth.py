@@ -15,10 +15,10 @@ def capture(app_name):
         context = browser.new_context(ignore_https_errors=True)
         page = context.new_page()
         # Login page
-        page.goto("https://192.168.45.33/login", wait_until="domcontentloaded")
+        page.goto(KIBANA_LOGIN_URL, wait_until="domcontentloaded")
 
-        page.fill('[data-test-subj="loginUsername"]', "ls23")
-        page.fill('[data-test-subj="loginPassword"]', "bniy2k")
+        page.fill('[data-test-subj="loginUsername"]', KIBANA_USERNAME)
+        page.fill('[data-test-subj="loginPassword"]', KIBANA_PASSWORD)
         page.click('[data-test-subj="loginSubmit"]')
 
         page.wait_for_load_state("networkidle")

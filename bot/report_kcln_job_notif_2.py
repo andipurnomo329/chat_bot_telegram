@@ -2,6 +2,7 @@ import base64
 import json
 import os
 import urllib3
+from pathlib import Path
 from telegram import Bot, Update
 from telegram.ext import (
     CallbackContext,
@@ -11,14 +12,18 @@ from telegram.ext import (
     Updater,
 )
 
+from utils.env_loader import load_env_file
+
+load_env_file(Path(__file__).resolve().parents[1] / ".env")
+
 # ================================
 # KONFIGURASI & KREDENSIAL
 # ================================
-ES_HOST = "https://192.168.45.15:443"
-ES_USERNAME = "app_super"
-ES_PASSWORD = "appsuperpassw0rd"
+ES_HOST = os.environ.get("ES_HOST", "")
+ES_USERNAME = os.environ.get("ES_USERNAME", "")
+ES_PASSWORD = os.environ.get("ES_PASSWORD", "")
 
-TELEGRAM_TOKEN = "8469715430:AAGpWw9g4zTBIe51NlA7fRACK9Jy7I1eMZw"
+TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN_REPORTS", "")
 AUTO_NOTIF_CHAT_ID = 1399365875
 
 # File lokal untuk persitensi cache agar tahan saat bot restart

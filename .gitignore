@@ -2,6 +2,15 @@
 __pycache__/
 *.pyc
 *.pyo
+
+# Log & runtime cache
 *.log
+bot/auto_notif_cache.json
+
+# Report/screenshot output (data hasil generate, bukan source code)
 *.png
+*.xlsx
+
+# Kredensial
+.env
 config/settings_local.py

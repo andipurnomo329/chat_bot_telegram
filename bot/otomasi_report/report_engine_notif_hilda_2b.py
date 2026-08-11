@@ -1,19 +1,25 @@
 import json,base64
+import os
 import urllib3
 import xlsxwriter
 from datetime import datetime,timedelta
 from io import BytesIO
+from pathlib import Path
 from telegram import Bot, Update
 from telegram.ext import Updater, CommandHandler, MessageHandler, Filters, CallbackContext
 
-ES_HOST = "https://192.168.45.15:443"
-ES_USERNAME="app_super"
-ES_PASSWORD="appsuperpassw0rd"
+from utils.env_loader import load_env_file
+
+load_env_file(Path(__file__).resolve().parents[2] / ".env")
+
+ES_HOST = os.environ.get("ES_HOST", "")
+ES_USERNAME = os.environ.get("ES_USERNAME", "")
+ES_PASSWORD = os.environ.get("ES_PASSWORD", "")
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 http = urllib3.PoolManager(cert_reqs='CERT_NONE', assert_hostname=False)
 
-TOKEN = "8469715430:AAGpWw9g4zTBIe51NlA7fRACK9Jy7I1eMZw"
+TOKEN = os.environ.get("TELEGRAM_TOKEN_REPORTS", "")
 bot = Bot(token=TOKEN)
 
 def es_api_for_rqst(http, method, path, body=None):

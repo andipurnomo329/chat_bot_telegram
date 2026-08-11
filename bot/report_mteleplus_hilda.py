@@ -1,25 +1,31 @@
 import json
 import base64
+import os
 import urllib3
 import xlsxwriter
 from datetime import datetime
 from io import BytesIO
+from pathlib import Path
 from telegram import Bot, Update
 from telegram.ext import Updater, CommandHandler, MessageHandler, Filters, CallbackContext
+
+from utils.env_loader import load_env_file
+
+load_env_file(Path(__file__).resolve().parents[1] / ".env")
 
 # =====================================================================
 # GLOBAL CONFIGURATION (PURE STANDALONE MTELEPLUS)
 # =====================================================================
-ES_HOST = "https://192.168.45.15:443"
-ES_USERNAME = "app_super"
-ES_PASSWORD = "appsuperpassw0rd"
+ES_HOST = os.environ.get("ES_HOST", "")
+ES_USERNAME = os.environ.get("ES_USERNAME", "")
+ES_PASSWORD = os.environ.get("ES_PASSWORD", "")
 INDEX_PATTERN = "log-mteleplus*"
 DATE_FIELD = "date_origin"
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 http = urllib3.PoolManager(cert_reqs='CERT_NONE', assert_hostname=False)
 
-TOKEN = "8469715430:AAGpWw9g4zTBIe51NlA7fRACK9Jy7I1eMZw"
+TOKEN = os.environ.get("TELEGRAM_TOKEN_REPORTS", "")
 bot = Bot(token=TOKEN)
 
 # Rule Query String khusus log-mteleplus*
