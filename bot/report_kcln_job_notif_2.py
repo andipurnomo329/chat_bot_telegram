@@ -2,6 +2,7 @@ import base64
 import json
 import os
 import urllib3
+from datetime import datetime, time, timezone
 from pathlib import Path
 from telegram import Bot, Update
 from telegram.ext import (
@@ -26,26 +27,22 @@ ES_PASSWORD = os.environ.get("ES_PASSWORD", "")
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN_REPORTS", "")
 AUTO_NOTIF_CHAT_ID = 1399365875
 
-# File lokal untuk persitensi cache agar tahan saat bot restart
 CACHE_FILE = "auto_notif_cache.json"
 
-# Nonaktifkan warning SSL Certificate
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 http = urllib3.PoolManager(cert_reqs="CERT_NONE", assert_hostname=False)
 bot = Bot(token=TELEGRAM_TOKEN)
 
-# Konfigurasi Index ETL
 ETL_INDEX_CONFIG = {
     "index": "reportingkcln-*",
     "date_field": "@timestamp",
-    "job_name_field": "job_name.keyword",
-    "file_name_field": "filename.keyword",
     "status_field": "status.keyword",
     "error_msg_field": "error_message",
     "fail_value": "GAGAL",
 }
 
-# DAFTAR 9 JOB WAJIB (REQUIRED JOBS)
+SERVERS = ["london_dc", "newyork_dc"]
+
 REQUIRED_JOBS = [
     "run_edw_dblink.sh",
     "get_dump_file.sh",
@@ -60,22 +57,19 @@ REQUIRED_JOBS = [
 
 
 # ================================
-# HELPER PERSISTENSI CACHE (FILE)
+# HELPER CACHE & ELASTICSEARCH
 # ================================
 def load_cache() -> set:
-    """Membaca cache dari file JSON jika ada."""
     if os.path.exists(CACHE_FILE):
         try:
             with open(CACHE_FILE, "r") as f:
-                data = json.load(f)
-                return set(data)
+                return set(json.load(f))
         except Exception as e:
             print(f"[CACHE WARNING] Gagal membaca file cache: {e}")
     return set()
 
 
 def save_cache(cache_set: set):
-    """Menyimpan cache ke file JSON."""
     try:
         with open(CACHE_FILE, "w") as f:
             json.dump(list(cache_set), f)
@@ -83,13 +77,9 @@ def save_cache(cache_set: set):
         print(f"[CACHE ERROR] Gagal menyimpan file cache: {e}")
 
 
-# Inisialisasi cache dari file saat bot pertama kali nyala
 notified_auto_cache = load_cache()
 
 
-# ================================
-# HELPER ELASTICSEARCH API
-# ================================
 def es_api_for_rqst(http, method, path, body=None):
     url = f"{ES_HOST}{path}"
     token = base64.b64encode(f"{ES_USERNAME}:{ES_PASSWORD}".encode()).decode()
@@ -110,37 +100,110 @@ def es_api_for_rqst(http, method, path, body=None):
 
 
 # ================================
+# HELPER PARSING TIMEZONE
+# ================================
+def parse_es_timestamp(ts_raw: str):
+    """Merapikan format @timestamp Elasticsearch dan konversi ke Waktu Lokal (WIB)."""
+    if not ts_raw or ts_raw == "-":
+        return None
+    try:
+        clean_ts = ts_raw.replace("Z", "+00:00")
+        dt = datetime.fromisoformat(clean_ts)
+        return dt.astimezone()
+    except Exception:
+        for fmt in ("%Y-%m-%dT%H:%M:%S.%f", "%Y-%m-%d %H:%M:%S", "%Y-%b-%d %H:%M:%S.%f"):
+            try:
+                dt_naive = datetime.strptime(ts_raw.split("+")[0].strip(), fmt)
+                return dt_naive.replace(tzinfo=timezone.utc).astimezone()
+            except ValueError:
+                continue
+    return None
+
+
+def detect_server_name(source: dict, source_str_lower: str) -> str:
+    srv_from_doc = (
+        source.get("server")
+        or source.get("server_name")
+        or source.get("datacenter")
+        or source.get("host", {}).get("name")
+        or ""
+    ).lower()
+
+    if "london" in srv_from_doc or "london_dc" in source_str_lower:
+        return "london_dc"
+    elif "newyork" in srv_from_doc or "newyork_dc" in source_str_lower:
+        return "newyork_dc"
+
+    return None
+
+
+def is_in_target_window_by_es_timestamp(es_ts_str: str, server: str) -> bool:
+    dt = parse_es_timestamp(es_ts_str)
+    if not dt:
+        return False
+
+    now = datetime.now().astimezone()
+
+    # Cek Current Day berdasarkan Waktu Lokal
+    if dt.date() != now.date():
+        return False
+
+    t = dt.time()
+    if server == "london_dc":
+        return time(8, 0, 0) <= t <= time(9, 0, 59)
+    elif server == "newyork_dc":
+        return time(13, 15, 0) <= t <= time(23, 59, 59)
+
+    return False
+
+
+# ================================
 # FUNGSI CORE PENGECEKAN JOB ETL
 # ================================
 def fetch_and_evaluate_jobs(hours_back=24):
     cfg = ETL_INDEX_CONFIG
-    
-    # KITA REVISI QUERY: Filter langsung dari Elasticsearch agar tidak tertutup log lain!
-    should_clauses = [{"wildcard": {"*": f"*{job}*"}} for job in REQUIRED_JOBS]
-    
+
+    # Query ES diurutkan Ascending (ASC) agar urutan run ke-1, 2, 3 berurutan rapi
     query = {
-        "size": 500,  # Naikkan batas jika perlu
-        "sort": [{cfg["date_field"]: {"order": "desc"}}],
+        "size": 1000,
+        "sort": [{cfg["date_field"]: {"order": "asc"}}],
         "query": {
             "bool": {
                 "must": [
-                    {"range": {cfg["date_field"]: {"gte": f"now-{hours_back}h", "lte": "now"}}}
+                    {
+                        "range": {
+                            cfg["date_field"]: {
+                                "gte": "now-24h",
+                                "lte": "now",
+                            }
+                        }
+                    }
                 ]
             }
-        }
+        },
     }
 
     res = es_api_for_rqst(http, "GET", f"/{cfg['index']}/_search", query)
     hits = res.get("hits", {}).get("hits", [])
 
-    job_status_map = {}
+    server_job_map = {srv: {} for srv in SERVERS}
 
     for hit in hits:
         doc_id = hit.get("_id", "")
         source = hit.get("_source", {})
-        
-        # Ubah seluruh isi dokumen menjadi string JSON lowercase untuk pencarian cepat
         source_str_lower = json.dumps(source).lower()
+
+        server = detect_server_name(source, source_str_lower)
+        if not server or server not in SERVERS:
+            continue
+
+        es_timestamp = source.get(cfg["date_field"]) or source.get("@timestamp") or "-"
+
+        if not is_in_target_window_by_es_timestamp(es_timestamp, server):
+            continue
+
+        start_time = source.get("start_time") or source.get("START_TIME") or "-"
+        end_time = source.get("end_time") or source.get("END_TIME") or "-"
 
         status = (
             source.get(cfg["status_field"])
@@ -148,173 +211,204 @@ def fetch_and_evaluate_jobs(hours_back=24):
             or source.get("STATUS")
             or "UNKNOWN"
         )
-        error_msg = source.get(cfg["error_msg_field"]) or source.get("ERROR_MESSAGE") or source.get("error_message")
-        end_time = (
-            source.get("end_time")
-            or source.get("END_TIME")
-            or source.get(cfg["date_field"])
-            or "-"
+        error_msg = (
+            source.get(cfg["error_msg_field"])
+            or source.get("ERROR_MESSAGE")
+            or source.get("error_message")
         )
 
+        is_success = str(status).upper() not in [cfg["fail_value"].upper(), "FAILED", "ERROR"]
+
         for req_job in REQUIRED_JOBS:
-            # Pengecekan fleksibel: Jika nama file sh ada di dalam isi dokumen log
             if req_job.lower() in source_str_lower:
-                if req_job not in job_status_map:
-                    job_status_map[req_job] = {
+                if req_job not in server_job_map[server]:
+                    server_job_map[server][req_job] = {
                         "doc_id": doc_id,
                         "job_name": req_job,
                         "status": str(status).upper(),
                         "error_msg": error_msg,
-                        "end_time": end_time,
+                        "count": 1 if is_success else 0,
+                        "runs_history": [{"start": start_time, "end": end_time}] if is_success else [],
                     }
+                else:
+                    if is_success:
+                        server_job_map[server][req_job]["count"] += 1
+                        server_job_map[server][req_job]["runs_history"].append(
+                            {"start": start_time, "end": end_time}
+                        )
 
-    return job_status_map
+                    if str(status).upper() == cfg["fail_value"].upper():
+                        server_job_map[server][req_job]["status"] = cfg["fail_value"].upper()
+                        if error_msg:
+                            server_job_map[server][req_job]["error_msg"] = error_msg
+
+    return server_job_map
 
 
 # ================================
 # FUNGSI FORMATTING LAPORAN
 # ================================
-def send_report_check_etl(chat_id, job_status_map, hours_back=24, is_auto=False):
-    failed_jobs = []
-    missing_jobs = []
-    successful_jobs = []
-
-    for req_job in REQUIRED_JOBS:
-        if req_job in job_status_map:
-            job_info = job_status_map[req_job]
-            if job_info["status"] == ETL_INDEX_CONFIG["fail_value"].upper():
-                failed_jobs.append(job_info)
-            else:
-                successful_jobs.append(job_info)
-        else:
-            missing_jobs.append(req_job)
-
-    total_req = len(REQUIRED_JOBS)
-    total_ok = len(successful_jobs)
-
+def send_report_check_etl(chat_id, server_job_map, hours_back=24, is_auto=False):
     tag_title = "🤖 *[AUTOMATIC NOTIFICATION]*\n" if is_auto else ""
-    msg = f"{tag_title}📊 *LAPORAN AUDIT BATCH ETL ({hours_back} JAM TERAKHIR)*\n"
-    msg += f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-    msg += f"📈 *Ringkasan Status:* `{total_ok}/{total_req}` Job Berhasil\n\n"
+    msg = f"{tag_title}📊 *LAPORAN AUDIT BATCH ETL (HARI INI)*\n"
+    msg += f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
 
-    if failed_jobs or missing_jobs:
-        msg += f"❌ *STATUS KESELURUHAN: GAGAL / INCOMPLETE*\n\n"
+    for server in SERVERS:
+        job_map = server_job_map.get(server, {})
+        srv_name = server.upper()
 
-        if failed_jobs:
-            msg += f"⚠️ *Daftar Job Gagal ({len(failed_jobs)}):*\n"
-            for f in failed_jobs:
-                msg += f"• `{f['job_name']}` (Selesai: `{f['end_time']}`)\n"
-                if f["error_msg"]:
-                    msg += f"   💬 _Err:_ `{str(f['error_msg'])[:100]}`\n"
-            msg += "\n"
+        window_info = (
+            "Jam 08:00 - 09:00" if server == "london_dc" else "Jam 13:15 - 23:59"
+        )
 
-        if missing_jobs:
-            msg += f"🚫 *Daftar Job Missing/Belum Jalan ({len(missing_jobs)}):*\n"
-            for m in missing_jobs:
-                msg += f"• `{m}`\n"
-            msg += "\n"
-    else:
-        msg += f"✅ *STATUS KESELURUHAN: BERHASIL LENGKAP*\n\n"
+        failed_jobs = []
+        missing_jobs = []
+        successful_jobs = []
 
-    msg += f"📋 *Rincian Ke-9 Job ETL Wajib:*\n"
-    for req_job in REQUIRED_JOBS:
-        if req_job in job_status_map:
-            st = job_status_map[req_job]["status"]
-            time_finish = job_status_map[req_job]["end_time"]
-            icon = "✅" if st != "GAGAL" else "❌"
-            msg += f"{icon} `{req_job}` → *{st}* (🕒 `{time_finish}`)\n"
-        else:
-            msg += f"❓ `{req_job}` → *MISSING*\n"
+        for req_job in REQUIRED_JOBS:
+            if req_job in job_map:
+                job_info = job_map[req_job]
+                if job_info["status"] == ETL_INDEX_CONFIG["fail_value"].upper():
+                    failed_jobs.append(job_info)
+                else:
+                    successful_jobs.append(job_info)
+            else:
+                missing_jobs.append(req_job)
+
+        total_req = len(REQUIRED_JOBS)
+        total_ok = len(successful_jobs)
+
+        msg += f"🖥️ *SERVER: {srv_name}*\n"
+        msg += f"⏱️ *Jendela Waktu Target:* {window_info}\n"
+        msg += f"📈 *Status:* `{total_ok}/{total_req}` Job Berhasil\n"
+
+        if failed_jobs or missing_jobs:
+            if failed_jobs:
+                msg += f"⚠️ *Job Gagal ({len(failed_jobs)}):*\n"
+                for f in failed_jobs:
+                    msg += f" • `{f['job_name']}` ({f['count']}x Run)\n"
+                    if f["error_msg"]:
+                        msg += f"   💬 _Err:_ `{str(f['error_msg'])[:80]}`\n"
+
+            if missing_jobs:
+                msg += f"🚫 *Job Missing/Belum Jalan ({len(missing_jobs)}):*\n"
+                for m in missing_jobs:
+                    msg += f" • `{m}`\n"
+
+        msg += f"📋 *Detail Status Job:*\n"
+        for req_job in REQUIRED_JOBS:
+            if req_job in job_map:
+                st = job_map[req_job]["status"]
+                cnt = job_map[req_job]["count"]
+                history = job_map[req_job]["runs_history"]
+                icon = "✅" if st != "GAGAL" else "❌"
+
+                msg += f"{icon} `{req_job}` (`{cnt}x`) → *{st}*\n"
+
+                # Rincian Waktu Run
+                if history:
+                    first_run = history[0]
+                    msg += f" ├ 🕒 _Run 1:_ `{first_run['start']}` s/d `{first_run['end']}`\n"
+
+                    # Jika berjalan >1x, tampilkan run terakhir
+                    if len(history) > 1:
+                        last_run = history[-1]
+                        msg += f" └ 🕒 _Run {len(history)}:_ `{last_run['start']}` s/d `{last_run['end']}`\n"
+            else:
+                msg += f"❓ `{req_job}` → *MISSING*\n"
+
+        msg += "\n-----------------------------\n\n"
 
     bot.send_message(chat_id=chat_id, text=msg, parse_mode="Markdown")
 
 
-def send_report_notif_gagal(chat_id, job_status_map, hours_back=24):
-    failed_jobs = []
-    missing_jobs = []
-
-    for req_job in REQUIRED_JOBS:
-        if req_job in job_status_map:
-            job_info = job_status_map[req_job]
-            if job_info["status"] == ETL_INDEX_CONFIG["fail_value"].upper():
-                failed_jobs.append(job_info)
-        else:
-            missing_jobs.append(req_job)
-
-    if not failed_jobs and not missing_jobs:
-        msg = f"✅ *[OK]* Semua {len(REQUIRED_JOBS)} Job ETL berjalan sukses dalam {hours_back} jam terakhir."
-        bot.send_message(chat_id=chat_id, text=msg, parse_mode="Markdown")
-        return
-
+def send_report_notif_gagal(chat_id, server_job_map, hours_back=24):
+    has_issues = False
     msg = f"🚨 *[ALERT] DETEKSI MASALAH JOB ETL!* 🚨\n"
-    msg += f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+    msg += f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
 
-    if failed_jobs:
-        msg += f"❌ *JOB GAGAL ({len(failed_jobs)}):*\n"
-        for f in failed_jobs:
-            msg += f"⚙️ Job: `{f['job_name']}`\n"
-            msg += f"🕒 Selesai: `{f['end_time']}`\n"
-            if f["error_msg"]:
-                msg += f"💬 Error: `{str(f['error_msg'])[:150]}`\n"
-            msg += "-----------------------------\n"
+    for server in SERVERS:
+        job_map = server_job_map.get(server, {})
+        srv_name = server.upper()
+        failed_jobs = []
+        missing_jobs = []
 
-    if missing_jobs:
-        msg += f"⚠️ *JOB MISSING ({len(missing_jobs)}):*\n"
-        for m in missing_jobs:
-            msg += f"• `{m}` (Tidak ada log)\n"
+        for req_job in REQUIRED_JOBS:
+            if req_job in job_map:
+                job_info = job_map[req_job]
+                if job_info["status"] == ETL_INDEX_CONFIG["fail_value"].upper():
+                    failed_jobs.append(job_info)
+            else:
+                missing_jobs.append(req_job)
+
+        if failed_jobs or missing_jobs:
+            has_issues = True
+            msg += f"🖥️ *SERVER: {srv_name}*\n"
+
+            if failed_jobs:
+                msg += f"❌ *JOB GAGAL ({len(failed_jobs)}):*\n"
+                for f in failed_jobs:
+                    msg += f"⚙️ Job: `{f['job_name']}` ({f['count']}x Run)\n"
+                    if f["error_msg"]:
+                        msg += f"💬 Error: `{str(f['error_msg'])[:150]}`\n"
+                    msg += "-----------------------------\n"
+
+            if missing_jobs:
+                msg += f"⚠️ *JOB MISSING ({len(missing_jobs)}):*\n"
+                for m in missing_jobs:
+                    msg += f" • `{m}` (Tidak ada log pada jam target)\n"
+                msg += "\n"
+
+    if not has_issues:
+        msg = f"✅ *[OK]* Semua Job ETL di London & NewYork DC berjalan sukses sesuai jadwal."
 
     bot.send_message(chat_id=chat_id, text=msg, parse_mode="Markdown")
 
 
 # ================================
-# LOGIKA OTOMASI MURNI
+# LOGIKA OTOMASI & HANDLER
 # ================================
 def auto_trigger_notif(context: CallbackContext):
     global notified_auto_cache
     chat_id = AUTO_NOTIF_CHAT_ID
 
     try:
-        job_status_map = fetch_and_evaluate_jobs(hours_back=24)
+        server_job_map = fetch_and_evaluate_jobs(hours_back=24)
 
         status_signature_list = []
-        for req_job in sorted(REQUIRED_JOBS):
-            if req_job in job_status_map:
-                info = job_status_map[req_job]
-                status_signature_list.append(
-                    f"{req_job}:{info['doc_id']}:{info['status']}:{info['end_time']}"
-                )
-            else:
-                status_signature_list.append(f"{req_job}:MISSING")
+        for srv in sorted(SERVERS):
+            job_map = server_job_map.get(srv, {})
+            for req_job in sorted(REQUIRED_JOBS):
+                if req_job in job_map:
+                    info = job_map[req_job]
+                    status_signature_list.append(
+                        f"{srv}:{req_job}:{info['doc_id']}:{info['status']}:{info['count']}:{info['runs_history']}"
+                    )
+                else:
+                    status_signature_list.append(f"{srv}:{req_job}:MISSING")
 
         current_auto_key = "|".join(status_signature_list)
 
-        # Cek apakah state ini sudah pernah dikirim (meskipun bot pernah di-restart)
         if current_auto_key not in notified_auto_cache:
             send_report_check_etl(
                 chat_id=chat_id,
-                job_status_map=job_status_map,
+                server_job_map=server_job_map,
                 hours_back=24,
                 is_auto=True,
             )
-            # Simpan ke memori dan tulis ke file lokal (JSON)
             notified_auto_cache.add(current_auto_key)
             save_cache(notified_auto_cache)
             print("[OTOMASI] Notifikasi otomatis berhasil dikirimkan.")
         else:
-            print("[OTOMASI] State log ini sudah pernah dikirim secara otomatis. Skip.")
+            print("[OTOMASI] State log ini sudah pernah dikirim. Skip.")
 
     except Exception as e:
         print(f"[OTOMASI ERROR] Gagal mengeksekusi otomatisasi: {e}")
 
 
-# ================================
-# HANDLER COMMAND TELEGRAM
-# ================================
 def handle_message(update: Update, context: CallbackContext):
     text = update.message.text
     chat_id = update.message.chat_id
-
-    print(f"Pesan Diterima dari Chat ID: {chat_id}")
 
     parts = text.split()
     cmd = parts[0]
@@ -329,18 +423,18 @@ def handle_message(update: Update, context: CallbackContext):
     if cmd in ["/check_etl_gagal", "/notif_gagal"]:
         bot.send_message(
             chat_id=chat_id,
-            text=f"⏳ *Memeriksa {len(REQUIRED_JOBS)} Job ETL Wajib ({hours_back} jam terakhir)...*",
+            text=f"⏳ *Memeriksa {len(REQUIRED_JOBS)} Job ETL Wajib per Server...*",
             parse_mode="Markdown",
         )
-        job_status_map = fetch_and_evaluate_jobs(hours_back=hours_back)
+        server_job_map = fetch_and_evaluate_jobs(hours_back=hours_back)
 
         if cmd == "/check_etl_gagal":
             send_report_check_etl(
-                chat_id, job_status_map, hours_back=hours_back, is_auto=False
+                chat_id, server_job_map, hours_back=hours_back, is_auto=False
             )
         elif cmd == "/notif_gagal":
             send_report_notif_gagal(
-                chat_id, job_status_map, hours_back=hours_back
+                chat_id, server_job_map, hours_back=hours_back
             )
 
 
@@ -356,9 +450,15 @@ def main():
 
     job_queue = updater.job_queue
 
-    # Pengaturan toleransi latensi (misfire_grace_time) agar peringatan 'Run time missed' tidak muncul
-    job_queue.run_once(auto_trigger_notif, when=3, job_kwargs={'misfire_grace_time': 60})
-    job_queue.run_repeating(auto_trigger_notif, interval=900, first=10, job_kwargs={'misfire_grace_time': 60})
+    job_queue.run_once(
+        auto_trigger_notif, when=3, job_kwargs={"misfire_grace_time": 60}
+    )
+    job_queue.run_repeating(
+        auto_trigger_notif,
+        interval=900,
+        first=10,
+        job_kwargs={"misfire_grace_time": 60},
+    )
 
     print("Bot Berjalan... Menunggu pengecekan otomatis...")
     updater.start_polling()
