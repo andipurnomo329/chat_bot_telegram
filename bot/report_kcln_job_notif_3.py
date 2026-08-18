@@ -16,6 +16,7 @@ from telegram.ext import (
 )
 from utils.env_loader import load_env_file
 
+# Muat file .env dari folder root project
 load_env_file(Path(__file__).resolve().parents[1] / ".env")
 
 # ================================
@@ -26,14 +27,32 @@ ES_USERNAME = os.environ.get("ES_USERNAME", "")
 ES_PASSWORD = os.environ.get("ES_PASSWORD", "")
 
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN_REPORTS", "")
-AUTO_NOTIF_CHAT_ID = 1399365875
 
-CACHE_FILE = "auto_notif_cache.json"
+# Parsing target chat / group ID dari ENV (format comma-separated)
+RAW_TARGET_IDS = os.environ.get("TELEGRAM_GROUP_IDS", "")
 
-# --- KONFIGURASI JADWAL OTOMASI HARIAN ---
-# Ubah nilai di sini jika ingin mengganti jam/menit (Misal ke 17:30 -> TARGET_HOUR = 17, TARGET_MINUTE = 30)
-TARGET_HOUR = 9
-TARGET_MINUTE = 49
+
+def parse_target_chat_ids(raw_ids: str) -> list:
+    targets = []
+    if not raw_ids:
+        return targets
+    for item in raw_ids.split(","):
+        cleaned = item.strip()
+        if cleaned:
+            try:
+                targets.append(int(cleaned))
+            except ValueError:
+                print(f"[ENV WARNING] ID Telegram tidak valid: {cleaned}")
+    return targets
+
+
+TARGET_CHAT_IDS = parse_target_chat_ids(RAW_TARGET_IDS)
+
+# --- KONFIGURASI JADWAL TARGET PER SERVER (WIB) ---
+SCHEDULE_CONFIG = {
+    "london_dc": {"hour": 8, "minute": 45},
+    "newyork_dc": {"hour": 13, "minute": 45},
+}
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 http = urllib3.PoolManager(cert_reqs="CERT_NONE", assert_hostname=False)
@@ -63,29 +82,8 @@ REQUIRED_JOBS = [
 
 
 # ================================
-# HELPER CACHE & ELASTICSEARCH
+# HELPER ELASTICSEARCH & TIMESTAMP
 # ================================
-def load_cache() -> set:
-    if os.path.exists(CACHE_FILE):
-        try:
-            with open(CACHE_FILE, "r") as f:
-                return set(json.load(f))
-        except Exception as e:
-            print(f"[CACHE WARNING] Gagal membaca file cache: {e}")
-    return set()
-
-
-def save_cache(cache_set: set):
-    try:
-        with open(CACHE_FILE, "w") as f:
-            json.dump(list(cache_set), f)
-    except Exception as e:
-        print(f"[CACHE ERROR] Gagal menyimpan file cache: {e}")
-
-
-notified_auto_cache = load_cache()
-
-
 def es_api_for_rqst(http, method, path, body=None):
     url = f"{ES_HOST}{path}"
     token = base64.b64encode(f"{ES_USERNAME}:{ES_PASSWORD}".encode()).decode()
@@ -105,11 +103,7 @@ def es_api_for_rqst(http, method, path, body=None):
         return {"error": str(e)}
 
 
-# ================================
-# HELPER PARSING TIMEZONE
-# ================================
 def parse_es_timestamp(ts_raw: str):
-    """Merapikan format @timestamp Elasticsearch dan konversi ke Waktu Lokal (WIB)."""
     if not ts_raw or ts_raw == "-":
         return None
     try:
@@ -153,8 +147,6 @@ def is_in_target_window_by_es_timestamp(es_ts_str: str, server: str) -> bool:
         return False
 
     now = datetime.now().astimezone()
-
-    # Cek Current Day berdasarkan Waktu Lokal
     if dt.date() != now.date():
         return False
 
@@ -168,11 +160,10 @@ def is_in_target_window_by_es_timestamp(es_ts_str: str, server: str) -> bool:
 
 
 # ================================
-# FUNGSI CORE PENGECEKAN JOB ETL
+# FUNGSI CORE EVALUASI JOB
 # ================================
 def fetch_and_evaluate_jobs(hours_back=24):
     cfg = ETL_INDEX_CONFIG
-
     query = {
         "size": 1000,
         "sort": [{cfg["date_field"]: {"order": "asc"}}],
@@ -182,7 +173,7 @@ def fetch_and_evaluate_jobs(hours_back=24):
                     {
                         "range": {
                             cfg["date_field"]: {
-                                "gte": "now-24h",
+                                "gte": f"now-{hours_back}h",
                                 "lte": "now",
                             }
                         }
@@ -209,15 +200,11 @@ def fetch_and_evaluate_jobs(hours_back=24):
         es_timestamp = (
             source.get(cfg["date_field"]) or source.get("@timestamp") or "-"
         )
-
         if not is_in_target_window_by_es_timestamp(es_timestamp, server):
             continue
 
-        start_time = (
-            source.get("start_time") or source.get("START_TIME") or "-"
-        )
+        start_time = source.get("start_time") or source.get("START_TIME") or "-"
         end_time = source.get("end_time") or source.get("END_TIME") or "-"
-
         status = (
             source.get(cfg["status_field"])
             or source.get("status")
@@ -263,31 +250,42 @@ def fetch_and_evaluate_jobs(hours_back=24):
                             "fail_value"
                         ].upper()
                         if error_msg:
-                            server_job_map[server][req_job]["error_msg"] = (
-                                error_msg
-                            )
+                            server_job_map[server][req_job]["error_msg"] = error_msg
 
     return server_job_map
 
 
 # ================================
-# FUNGSI FORMATTING LAPORAN
+# FUNGSI BROADCAST & FORMAT LAPORAN
 # ================================
+def broadcast_telegram_message(text: str, chat_ids: list):
+    """Kirim pesan ke seluruh Chat ID yang terdaftar."""
+    for cid in chat_ids:
+        try:
+            bot.send_message(chat_id=cid, text=text, parse_mode="Markdown")
+        except Exception as e:
+            print(f"[TELEGRAM ERROR] Gagal mengirim pesan ke Chat ID {cid}: {e}")
+
+
 def send_report_check_etl(
-    chat_id, server_job_map, hours_back=24, is_auto=False
+    target_chat_ids, server_job_map, target_servers=None, is_auto=False
 ):
+    if target_servers is None:
+        target_servers = SERVERS
+
+    # Konversi ke list jika passing single integer chat_id
+    if isinstance(target_chat_ids, (int, str)):
+        target_chat_ids = [target_chat_ids]
+
     tag_title = "🤖 *[AUTOMATIC NOTIFICATION]*\n" if is_auto else ""
     msg = f"{tag_title}📊 *LAPORAN AUDIT BATCH ETL (HARI INI)*\n"
-    msg += f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+    msg += "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
 
-    for server in SERVERS:
+    for server in target_servers:
         job_map = server_job_map.get(server, {})
         srv_name = server.upper()
-
         window_info = (
-            "Jam 08:00 - 09:00"
-            if server == "london_dc"
-            else "Jam 13:15 - 23:59"
+            "Jam 08:00 - 09:00" if server == "london_dc" else "Jam 13:15 - 23:59"
         )
 
         failed_jobs = []
@@ -297,10 +295,7 @@ def send_report_check_etl(
         for req_job in REQUIRED_JOBS:
             if req_job in job_map:
                 job_info = job_map[req_job]
-                if (
-                    job_info["status"]
-                    == ETL_INDEX_CONFIG["fail_value"].upper()
-                ):
+                if job_info["status"] == ETL_INDEX_CONFIG["fail_value"].upper():
                     failed_jobs.append(job_info)
                 else:
                     successful_jobs.append(job_info)
@@ -320,16 +315,14 @@ def send_report_check_etl(
                 for f in failed_jobs:
                     msg += f" • `{f['job_name']}` ({f['count']}x Run)\n"
                     if f["error_msg"]:
-                        msg += (
-                            f"   💬 _Err:_ `{str(f['error_msg'])[:80]}`\n"
-                        )
+                        msg += f"   💬 _Err:_ `{str(f['error_msg'])[:80]}`\n"
 
             if missing_jobs:
                 msg += f"🚫 *Job Missing/Belum Jalan ({len(missing_jobs)}):*\n"
                 for m in missing_jobs:
                     msg += f" • `{m}`\n"
 
-        msg += f"📋 *Detail Status Job:*\n"
+        msg += "📋 *Detail Status Job:*\n"
         for req_job in REQUIRED_JOBS:
             if req_job in job_map:
                 st = job_map[req_job]["status"]
@@ -342,7 +335,6 @@ def send_report_check_etl(
                 if history:
                     first_run = history[0]
                     msg += f" ├ 🕒 _Run 1:_ `{first_run['start']}` s/d `{first_run['end']}`\n"
-
                     if len(history) > 1:
                         last_run = history[-1]
                         msg += f" └ 🕒 _Run {len(history)}:_ `{last_run['start']}` s/d `{last_run['end']}`\n"
@@ -351,13 +343,16 @@ def send_report_check_etl(
 
         msg += "\n-----------------------------\n\n"
 
-    bot.send_message(chat_id=chat_id, text=msg, parse_mode="Markdown")
+    broadcast_telegram_message(msg, target_chat_ids)
 
 
-def send_report_notif_gagal(chat_id, server_job_map, hours_back=24):
+def send_report_notif_gagal(target_chat_ids, server_job_map):
+    if isinstance(target_chat_ids, (int, str)):
+        target_chat_ids = [target_chat_ids]
+
     has_issues = False
-    msg = f"🚨 *[ALERT] DETEKSI MASALAH JOB ETL!* 🚨\n"
-    msg += f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+    msg = "🚨 *[ALERT] DETEKSI MASALAH JOB ETL!* 🚨\n"
+    msg += "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
 
     for server in SERVERS:
         job_map = server_job_map.get(server, {})
@@ -368,10 +363,7 @@ def send_report_notif_gagal(chat_id, server_job_map, hours_back=24):
         for req_job in REQUIRED_JOBS:
             if req_job in job_map:
                 job_info = job_map[req_job]
-                if (
-                    job_info["status"]
-                    == ETL_INDEX_CONFIG["fail_value"].upper()
-                ):
+                if job_info["status"] == ETL_INDEX_CONFIG["fail_value"].upper():
                     failed_jobs.append(job_info)
             else:
                 missing_jobs.append(req_job)
@@ -395,56 +387,73 @@ def send_report_notif_gagal(chat_id, server_job_map, hours_back=24):
                 msg += "\n"
 
     if not has_issues:
-        msg = f"✅ *[OK]* Semua Job ETL di London & NewYork DC berjalan sukses sesuai jadwal."
+        msg = "✅ *[OK]* Semua Job ETL di London & NewYork DC berjalan sukses sesuai jadwal."
 
-    bot.send_message(chat_id=chat_id, text=msg, parse_mode="Markdown")
+    broadcast_telegram_message(msg, target_chat_ids)
 
 
 # ================================
-# LOGIKA OTOMASI & HANDLER
+# TRACKING CACHE HARIAN PER SERVER
 # ================================
-def auto_trigger_notif(context: CallbackContext):
-    global notified_auto_cache
-    chat_id = AUTO_NOTIF_CHAT_ID
+DAILY_RUN_TRACKER_FILE = "daily_run_tracker.json"
 
+
+def load_daily_run_tracker() -> dict:
+    if os.path.exists(DAILY_RUN_TRACKER_FILE):
+        try:
+            with open(DAILY_RUN_TRACKER_FILE, "r") as f:
+                return json.load(f)
+        except Exception:
+            pass
+    return {}
+
+
+def save_daily_run_tracker(tracker_data: dict):
     try:
-        server_job_map = fetch_and_evaluate_jobs(hours_back=24)
-
-        status_signature_list = []
-        for srv in sorted(SERVERS):
-            job_map = server_job_map.get(srv, {})
-            for req_job in sorted(REQUIRED_JOBS):
-                if req_job in job_map:
-                    info = job_map[req_job]
-                    status_signature_list.append(
-                        f"{srv}:{req_job}:{info['doc_id']}:{info['status']}:{info['count']}:{info['runs_history']}"
-                    )
-                else:
-                    status_signature_list.append(f"{srv}:{req_job}:MISSING")
-
-        current_auto_key = "|".join(status_signature_list)
-
-        if current_auto_key not in notified_auto_cache:
-            send_report_check_etl(
-                chat_id=chat_id,
-                server_job_map=server_job_map,
-                hours_back=24,
-                is_auto=True,
-            )
-            notified_auto_cache.add(current_auto_key)
-            save_cache(notified_auto_cache)
-            print("[OTOMASI] Notifikasi otomatis berhasil dikirimkan.")
-        else:
-            print("[OTOMASI] State log ini sudah pernah dikirim. Skip.")
-
+        with open(DAILY_RUN_TRACKER_FILE, "w") as f:
+            json.dump(tracker_data, f)
     except Exception as e:
-        print(f"[OTOMASI ERROR] Gagal mengeksekusi otomatisasi: {e}")
+        print(f"[CACHE ERROR] Gagal menyimpan file cache: {e}")
+
+
+def check_and_trigger_daily(context: CallbackContext = None):
+    wib_tz = pytz.timezone("Asia/Jakarta")
+    now_wib = datetime.now(wib_tz)
+    today_str = now_wib.strftime("%Y-%m-%d")
+
+    tracker = load_daily_run_tracker()
+
+    for server, sched in SCHEDULE_CONFIG.items():
+        last_run_date = tracker.get(server)
+        target_h = sched["hour"]
+        target_m = sched["minute"]
+
+        # Cek apakah sudah lewat jam target & belum dikirim hari ini
+        if last_run_date != today_str:
+            if (now_wib.hour, now_wib.minute) >= (target_h, target_m):
+                time_str = f"{target_h:02d}:{target_m:02d}"
+                print(
+                    f"[{now_wib.strftime('%Y-%m-%d %H:%M:%S')}] [OTOMASI {server.upper()} - {time_str}] Mengevaluasi job ES..."
+                )
+
+                server_job_map = fetch_and_evaluate_jobs(hours_back=24)
+                send_report_check_etl(
+                    target_chat_ids=TARGET_CHAT_IDS,
+                    server_job_map=server_job_map,
+                    target_servers=[server],
+                    is_auto=True,
+                )
+
+                tracker[server] = today_str
+                save_daily_run_tracker(tracker)
+                print(
+                    f"[{now_wib.strftime('%Y-%m-%d %H:%M:%S')}] [OTOMASI {server.upper()}] Sukses dikirim ke {TARGET_CHAT_IDS} & di-cache."
+                )
 
 
 def handle_message(update: Update, context: CallbackContext):
     text = update.message.text
     chat_id = update.message.chat_id
-
     parts = text.split()
     cmd = parts[0]
 
@@ -464,74 +473,9 @@ def handle_message(update: Update, context: CallbackContext):
         server_job_map = fetch_and_evaluate_jobs(hours_back=hours_back)
 
         if cmd == "/check_etl_gagal":
-            send_report_check_etl(
-                chat_id, server_job_map, hours_back=hours_back, is_auto=False
-            )
+            send_report_check_etl(chat_id, server_job_map, is_auto=False)
         elif cmd == "/notif_gagal":
-            send_report_notif_gagal(
-                chat_id, server_job_map, hours_back=hours_back
-            )
-
-
-# ================================
-# FUNGSI CACHE & OTOMASI HARIAN
-# ================================
-LAST_DAILY_RUN_FILE = "last_daily_run_bot_kcln.txt"
-
-
-def has_run_today() -> bool:
-    today_str = datetime.now().strftime("%Y-%m-%d")
-    if os.path.exists(LAST_DAILY_RUN_FILE):
-        try:
-            with open(LAST_DAILY_RUN_FILE, "r") as f:
-                return f.read().strip() == today_str
-        except Exception:
-            pass
-    return False
-
-
-def record_run_today():
-    today_str = datetime.now().strftime("%Y-%m-%d")
-    try:
-        with open(LAST_DAILY_RUN_FILE, "w") as f:
-            f.write(today_str)
-    except Exception as e:
-        print(f"[ERROR] Gagal mencatat cache tanggal: {e}")
-
-
-def check_and_trigger_daily(context: CallbackContext = None):
-    # Menggunakan datetime dengan Timezone Asia/Jakarta secara konsisten
-    wib_tz = pytz.timezone("Asia/Jakarta")
-    now_wib = datetime.now(wib_tz)
-
-    # Cek apakah sudah pernah berjalan sukses hari ini
-    if not has_run_today():
-        # Cek apakah jam saat ini sudah melewati target (17:30 WIB)
-        if (now_wib.hour, now_wib.minute) >= (TARGET_HOUR, TARGET_MINUTE):
-            time_str = f"{TARGET_HOUR:02d}:{TARGET_MINUTE:02d}"
-            print(
-                f"[{now_wib.strftime('%Y-%m-%d %H:%M:%S')}] [OTOMASI {time_str}] Memulai evaluasi job ES harian..."
-            )
-            
-            # PAKSA KIRIM TANPA SKIPPING VIA CACHE STATE DENGAN MENGIRIM REPORT DIRECTLY
-            server_job_map = fetch_and_evaluate_jobs(hours_back=24)
-            send_report_check_etl(
-                chat_id=AUTO_NOTIF_CHAT_ID,
-                server_job_map=server_job_map,
-                hours_back=24,
-                is_auto=True,
-            )
-            
-            # Catat bahwa laporan harian tanggal ini SUDAH berhasil dikirim
-            record_run_today()
-            print(
-                f"[{now_wib.strftime('%Y-%m-%d %H:%M:%S')}] [OTOMASI {time_str}] Sukses dikirim dan di-cache."
-            )
-    else:
-        time_str = f"{TARGET_HOUR:02d}:{TARGET_MINUTE:02d}"
-        print(
-            f"[{now_wib.strftime('%Y-%m-%d %H:%M:%S')}] Notifikasi harian {time_str} WIB sudah pernah dikirim hari ini. Skip."
-        )
+            send_report_notif_gagal(chat_id, server_job_map)
 
 
 def main():
@@ -540,27 +484,19 @@ def main():
 
     dp.add_handler(CommandHandler("check_etl_gagal", handle_message))
     dp.add_handler(CommandHandler("notif_gagal", handle_message))
-    dp.add_handler(
-        MessageHandler(Filters.text & ~Filters.command, handle_message)
-    )
+    dp.add_handler(MessageHandler(Filters.text & ~Filters.command, handle_message))
 
     job_queue = updater.job_queue
+    # Loop pengecekan interval 60 detik
+    job_queue.run_repeating(check_and_trigger_daily, interval=60, first=5)
 
-    # Periodic check setiap 60 detik untuk otomasi 17:30 WIB
-    job_queue.run_repeating(
-        check_and_trigger_daily, 
-        interval=60, 
-        first=5
-    )
-
-    time_str = f"{TARGET_HOUR:02d}:{TARGET_MINUTE:02d}"
     print(
-        f"[INFO] Bot Berjalan... Standby penjadwalan harian jam {time_str} WIB aktif."
+        f"[INFO] Bot Berjalan... Standby London (08:45 WIB) & New York (13:45 WIB). Target IDs: {TARGET_CHAT_IDS}"
     )
-    
-    # === BARIS PENTING DARI SINI ===
+
     updater.start_polling()
-    updater.idle()  # <--- PASTIKAN BARIS INI ADA! Ini yang menahan script agar tidak exit code 0.
-    
+    updater.idle()
+
+
 if __name__ == "__main__":
     main()
