@@ -3,7 +3,7 @@ import subprocess
 import sys
 import time
 
-BOT_MODULE = ["-m", "bot.report_kcln_job_notif_2"]
+BOT_MODULE = ["-m", "bot.report_kcln_job_notif_3"]
 PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
 LOG_FILE = os.path.join(PROJECT_ROOT, "supervisor.log")
 

@@ -38,7 +38,7 @@ def parse_target_chat_ids(raw_ids: str) -> list:
         return targets
     for item in raw_ids.split(","):
         cleaned = item.strip()
-        if cleaned:
+        if cleaned == "1399365875":
             try:
                 targets.append(int(cleaned))
             except ValueError:
@@ -50,8 +50,8 @@ TARGET_CHAT_IDS = parse_target_chat_ids(RAW_TARGET_IDS)
 
 # --- KONFIGURASI JADWAL TARGET PER SERVER (WIB) ---
 SCHEDULE_CONFIG = {
-    "london_dc": {"hour": 8, "minute": 45},
-    "newyork_dc": {"hour": 13, "minute": 45},
+    "london_dc": {"hour": 14, "minute": 32},
+    "newyork_dc": {"hour": 14, "minute": 33},
 }
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
