@@ -54,8 +54,8 @@ TARGET_CHAT_IDS = parse_target_chat_ids(RAW_TARGET_IDS)
 
 # --- KONFIGURASI JADWAL TARGET PER SERVER (WIB) ---
 SCHEDULE_CONFIG = {
-    "london_dc": {"hour": 15, "minute": 29},
-    "newyork_dc": {"hour": 15, "minute": 30},
+    "london_dc": {"hour": 16, "minute": 7},
+    "newyork_dc": {"hour": 16, "minute": 8},
 }
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
