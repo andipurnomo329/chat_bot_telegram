@@ -36,9 +36,13 @@ def parse_target_chat_ids(raw_ids: str) -> list:
     targets = []
     if not raw_ids:
         return targets
+
+    # Daftar ID yang diizinkan untuk diambil dari .env
+    ALLOWED_IDS = {"-1003265313247", "1399365875"}
+
     for item in raw_ids.split(","):
         cleaned = item.strip()
-        if cleaned == "1399365875":
+        if cleaned in ALLOWED_IDS:
             try:
                 targets.append(int(cleaned))
             except ValueError:
@@ -50,8 +54,8 @@ TARGET_CHAT_IDS = parse_target_chat_ids(RAW_TARGET_IDS)
 
 # --- KONFIGURASI JADWAL TARGET PER SERVER (WIB) ---
 SCHEDULE_CONFIG = {
-    "london_dc": {"hour": 14, "minute": 32},
-    "newyork_dc": {"hour": 14, "minute": 33},
+    "london_dc": {"hour": 15, "minute": 29},
+    "newyork_dc": {"hour": 15, "minute": 30},
 }
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
@@ -273,7 +277,6 @@ def send_report_check_etl(
     if target_servers is None:
         target_servers = SERVERS
 
-    # Konversi ke list jika passing single integer chat_id
     if isinstance(target_chat_ids, (int, str)):
         target_chat_ids = [target_chat_ids]
 
@@ -491,7 +494,7 @@ def main():
     job_queue.run_repeating(check_and_trigger_daily, interval=60, first=5)
 
     print(
-        f"[INFO] Bot Berjalan... Standby London (08:45 WIB) & New York (13:45 WIB). Target IDs: {TARGET_CHAT_IDS}"
+        f"[INFO] Bot Berjalan... Standby London ({SCHEDULE_CONFIG['london_dc']['hour']:02d}:{SCHEDULE_CONFIG['london_dc']['minute']:02d} WIB) & New York ({SCHEDULE_CONFIG['newyork_dc']['hour']:02d}:{SCHEDULE_CONFIG['newyork_dc']['minute']:02d} WIB). Target IDs: {TARGET_CHAT_IDS}"
     )
 
     updater.start_polling()
